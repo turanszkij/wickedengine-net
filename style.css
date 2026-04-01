@@ -1,0 +1,121 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+  --color-bg: #112330;
+  --color-dark: #08182A;
+  --color-light: #8ED1FC;
+  --color-shadow: rgb(80, 140, 180);
+}
+
+body {
+    font-family: system-ui;
+    line-height: 1.4;
+    background-color: var(--color-bg);
+    color: var(--color-light);
+    width: 100%;
+}
+
+/* Full-width header with full-width bottom border */
+header {
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-bottom: 8px;
+    padding-top: 8px;
+    background-color: var(--color-dark);
+    border-bottom: 2px solid rgb(80, 140, 180);
+    width: 100%;
+}
+
+/* This creates the full-width border effect */
+header::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -2px;
+    height: 2px;
+    z-index: -1;
+}
+
+a {
+    color: var(--color-light);
+    text-decoration: none;
+    margin-left: 10px;
+    font-size: 1.1em;
+}
+a:hover {
+    color: #EFEEFF;
+}
+a.active {
+    color: #EFEEFF;
+}
+
+article {
+    display: block;
+    width: 100%;
+    max-width: 1024px;          /* Optional: prevents it from getting too wide on large screens */
+    margin: 40px auto 0;        /* Centers it and adds top spacing */
+    color: var(--color-light);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    gap: 30px;
+    max-width: 1400px;
+    margin: 40px auto;
+    padding: 0 20px;
+}
+
+.bubble {
+    width: 480px;                    /* Adjust size as needed */
+    background-color: var(--color-dark);       /* Light blue background */
+    border: 2px solid var(--color-shadow);       /* Custom border color and thickness */
+    border-radius: 30px;             /* Makes it bubble-like */
+    padding: 20px;
+    color: var(--color-light);
+}
+
+.bubble img {
+    width: 100%;
+    border-radius: 8px;             /* Makes it bubble-like */
+    padding: 10px 0px;
+}
+
+.bubble-supporter {
+    width: 480px;                    /* Adjust size as needed */
+    background-color: #FAE3C3;       /* Light blue background */
+    border: 2px solid var(--color-shadow);       /* Custom border color and thickness */
+    border-radius: 30px;             /* Makes it bubble-like */
+    padding: 20px;
+    color: var(--color-light);
+}
+.bubble-supporter h2 {
+    color: var(--color-dark);
+}
+.bubble-supporter p {
+    color: var(--color-dark);
+}
+
+.button {
+    background-color: var(--color-light);
+    color: var(--color-dark);
+    width: 100%;                    /* Adjust size as needed */
+    border-radius: 20px;             /* Makes it bubble-like */
+    padding: 10px;
+}
+.button-supporter {
+    background-color: #FD8F40;
+    color: #FAE3C3;
+    width: 100%;                    /* Adjust size as needed */
+    border-radius: 20px;             /* Makes it bubble-like */
+    padding: 10px;
+}
