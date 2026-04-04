@@ -9,6 +9,7 @@
   --color-dark: #08182A;
   --color-light: #8ED1FC;
   --color-shadow: rgb(80, 140, 180);
+  --color-highlight: #EFEEFF;
 }
 
 body {
@@ -19,7 +20,6 @@ body {
     width: 100%;
 }
 
-/* Full-width header with full-width bottom border */
 header {
     position: relative;
     display: flex;
@@ -34,7 +34,6 @@ header {
     width: 100%;
 }
 
-/* This creates the full-width border effect */
 header::after {
     content: '';
     position: absolute;
@@ -52,17 +51,17 @@ a {
     font-size: 1.1em;
 }
 a:hover {
-    color: #EFEEFF;
+    color: var(--color-highlight);
 }
 a.active {
-    color: #EFEEFF;
+    color: var(--color-highlight);
 }
 
 article {
     display: block;
     width: 100%;
-    max-width: 1024px;          /* Optional: prevents it from getting too wide on large screens */
-    margin: 40px auto 0;        /* Centers it and adds top spacing */
+    max-width: 1024px;
+    margin: 40px auto 0;
     color: var(--color-light);
 }
 
@@ -76,25 +75,25 @@ article {
 }
 
 .bubble {
-    width: 480px;                    /* Adjust size as needed */
-    background-color: var(--color-dark);       /* Light blue background */
-    border: 2px solid var(--color-shadow);       /* Custom border color and thickness */
-    border-radius: 30px;             /* Makes it bubble-like */
+    max-width: 480px;
+    background-color: var(--color-dark);
+    border: 2px solid var(--color-shadow);
+    border-radius: 30px;
     padding: 20px;
     color: var(--color-light);
 }
 
 .bubble img {
     width: 100%;
-    border-radius: 8px;             /* Makes it bubble-like */
+    border-radius: 8px;
     padding: 10px 0px;
 }
 
 .bubble-supporter {
-    width: 480px;                    /* Adjust size as needed */
-    background-color: #FAE3C3;       /* Light blue background */
-    border: 2px solid var(--color-shadow);       /* Custom border color and thickness */
-    border-radius: 30px;             /* Makes it bubble-like */
+    max-width: 480px;
+    background-color: #FAE3C3;
+    border: 2px solid var(--color-shadow);
+    border-radius: 30px;
     padding: 20px;
     color: var(--color-light);
 }
@@ -108,14 +107,14 @@ article {
 .button {
     background-color: var(--color-light);
     color: var(--color-dark);
-    width: 100%;                    /* Adjust size as needed */
-    border-radius: 20px;             /* Makes it bubble-like */
+    width: 100%;
+    border-radius: 20px;
     padding: 10px;
 }
 .button-supporter {
     background-color: #FD8F40;
     color: #FAE3C3;
-    width: 100%;                    /* Adjust size as needed */
-    border-radius: 20px;             /* Makes it bubble-like */
+    width: 100%;
+    border-radius: 20px;
     padding: 10px;
 }
