@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Variable Rate Shading: first impressions – Wicked Engine</title>
+    <meta name="description" content="Variable Rate Shading (VRS) is a new DX12 feature introduced recently, that can be used to control shading rate. To be more precise, it is used to reduce shading rate, as opposed to the Multi Sampling Anti Aliasing…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2020/09/06/variable-rate-shading-first-impressions/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Variable Rate Shading: first impressions</h1>
+        <p class="meta"><time datetime="2020-09-06">September 6, 2020</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>Variable Rate Shading (VRS) is a new DX12 feature introduced recently, that can be used to control shading rate. To be more precise, it is used to reduce shading rate, as opposed to the Multi Sampling Anti Aliasing (MSAA) technique which is used to increase it. </p>
+<p>When using MSAA, every pixel gets allocated multiple samples in the render target, but unless multiple triangles touch it, it will be only shaded once. VRS on the other hand doesn’t allocate multiple samples per pixel, instead it can broadcast one shaded pixel to nearby pixels, and only shade a group of pixels once. The shading rate means how big is the group of pixels that can get shaded as one.</p>
+<p><strong>Basics</strong></p>
+<p>DirectX 12 lets the developer specify the shading rate as a block of pixels, it can be 1×1 (default, most detailed), 1×2, 2×1, 2×2 (least detailed) in the basic hardware implementation. Optionally, hardware can also support 2×4, 4×2, 4×4 pixel group at an additional capability level. The granularity of the shading rate selection can be controlled per draw call by the basic Tier1 VRS hardware. Controlling by draw call is already a huge improvement over MSAA, because that means shading rate is not consistent across the screen. To set the shading rate, it couldn’t be easier:</p>
+<pre><code class="language-plain">commandlist5-&gt;RSSetShadingRate(D3D12_SHADING_RATE_2X2, nullptr); // later about second parameter</code></pre>
+<p>That’s it, unlike MSAA, we don’t need to do any resolve passes, it just works as is.</p>
+<p>The Tier2 VRS feature level lets the developer specify the shading rate granularity even per triangle by using the SV_ShadingRate HLSL semantic for a uint shader input parameter. The SV_ShadingRate can be written as output from the vertex shader, domain shader, geometry shader and mesh shader. In all of the cases, the shading rate will be set per primitive, not per vertex, even though vertex and domain shaders only support the per vertex execution model. The triangle will receive the shading rate of the provoking vertex, which is the first vertex of the three vertices that make up the triangle. The pixel shader can also read the shading rate as an input parameter, which could be helpful in visualizing the rate.</p>
+<p>The Tier2 VRS implementation also supports controlling the shading rate by a screen aligned texture. The screen aligned texture is a R8_UINT formatted texture, which contains the shading rate information per tile. A tile can be 8×8, 16×16 or 32×32 pixel block, it can be queried from DX12 as part of the D3D12_FEATURE_DATA_D3D12_OPTIONS6 structure:</p>
+<pre><code class="language-plain">D3D12_FEATURE_DATA_D3D12_OPTIONS6 features_6;
+device-&gt;CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &amp;features_6, sizeof(features_6));
+features_6.VariableShadingRateTier; // shading rate image and per primitive selection only on tier2
+features_6.ShadingRateImageTileSize; // tile size will be 8, 16 or 32
+features_6.AdditionalShadingRatesSupported; // Whether 2x4, 4x2 and 4x4 rate is supported</code></pre>
+<p>Which means, that the shading rate image resolution will be:</p>
+<pre><code class="language-plain">width = (screen_width + tileSize - 1) / tileSize;
+height = (screen_height + tileSize - 1) / tileSize;</code></pre>
+<p>To bind the shading rate image, a call exists:</p>
+<pre><code class="language-plain">commandlist5-&gt;RSSetShadingRateImage(texture);</code></pre>
+<p>The shading rate image will need to be written from a compute shader through an Unordered Access View (RWTexture2D&lt;uint&gt;). Before binding it with the RSSetShadingRateImage command, it needs to be in the D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE.</p>
+<p>So there are multiple ways to set the shading rate: RSSetShadingRate, SV_ShadingRate, RSSetShadingRateImage, but which one will be in effect? This can be specified through the second parameter of the RSSetShadingRate() call with an array of combiners. The combiners can specify which shading rate selector will be chosen. For example, one that specified the least detailed shading rate (D3D12_SHADING_RATE_COMBINER_MAX), or the most detailed (D3D12_SHADING_RATE_COMBINER_MIN), or by other logic. Right now, I just want to apply the coarsest shading rate that was selected at all times, so I call this at the beginning of every command list:</p>
+<pre><code class="language-plain">D3D12_SHADING_RATE_COMBINER combiners[] =
+{
+	D3D12_SHADING_RATE_COMBINER_MAX,
+	D3D12_SHADING_RATE_COMBINER_MAX,
+};
+GetDirectCommandList(cmd)-&gt;RSSetShadingRate(D3D12_SHADING_RATE_1X1, combiners);</code></pre>
+<p>Next, I’d like to show some of the potential effects these can play into. </p>
+<ul><li>Materials<br/>For example, if there is an expensive material or not very important, lower the shading rate of it. It can easily be a per material setting that can be set at authoring time.</li></ul>
+<figure><img alt="" decoding="async" height="1080" src="../../../../wp-content/uploads/2020/09/vrs_helmet.png" width="1920"/><figcaption><em>Comparison of native (full rate) and variable rate shading (4×4 reduction). Texture sampling quality is reduced with VRS.</em></figcaption></figure>
+<figure><img alt="" decoding="async" height="1080" loading="lazy" src="../../../../wp-content/uploads/2020/09/vrs_weapon.png" width="1920"/><figcaption><em>Lighting quality is reduced with VRS (below) compared to full resolution shading (above), but geometry edges are retained.</em></figcaption></figure>
+<ul><li>Particle systems<br/>When drawing off screen particles into a low resolution render target, we can save performance easily, but it will be difficult to compose back the particles and retain smooth edges with the geometry in the depth buffer. Instead, we can choose to render with full resolution, and reduce shading rate. We can also keep using hardware depth testing this way and improve performance. </li></ul>
+<figure><img alt="" decoding="async" height="995" loading="lazy" src="../../../../wp-content/uploads/2020/09/vrs_particles.png" width="1882"/><figcaption><em>4×4 shading rate reduction for the particles. Large overlapping particles with lighting must reduce shading rate or rendered lower resolution for good performance. (ground plane also using VRS here)</em></figcaption></figure>
+<ul><li>Objects in the distance<br/>Objects in distance can easily reduce shading rate by draw call or per primitive rate selection.</li><li>Objects behind motion blur or depth of field<br/>Fast moving or out of focus objects can be shaded more coarsely and the shading rate image features can be used for this. In my first integration, I am using a compute shader that dispatches one thread group for each tile and each thread in the group reads a pixel’s velocity until all pixels in the tile are read. Each pixel’s velocity is mapped to a shading rate and then the most detailed one is determined via atomic operation inside the tile. The shader internally must write values that are taken from D3D12_SHADING_RATE struct, so in order to keep an API independent implementations, these values are not hard coded, but provided in a constant buffer. <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/shadingRateClassificationCS.hlsl">[My classification shader source code here, but it will probably change in the future]</a></li></ul>
+<figure><img alt="" decoding="async" height="1080" loading="lazy" src="../../../../wp-content/uploads/2020/09/vrs_motion.png" width="1920"/><figcaption><em>Shading rate classification by velocity buffer and moving camera. </em></figcaption></figure>
+<ul><li>Alpha testing<br/>For vegetations, we often want to do alpha testing, and often the depth prepass is used with alpha testing. In that case, we don’t have to alpha test in the second pass when we render colors and use more expensive pixel shaders, because the depth buffer is computed and we can rely on depth testing against previous results. Then the idea is that we will be able to reduce shading rate for the alpha tested vegetation only in the second pass, while retaining high resolution alpha testing quality from the depth prepass.</li></ul>
+<figure><img alt="" decoding="async" height="1080" loading="lazy" src="../../../../wp-content/uploads/2020/09/grass.png" width="1920"/><figcaption><em>Vegetation particle system using alpha testing</em></figcaption></figure>
+<p><strong>Problems:</strong></p>
+<ul><li>One of my observations is that when zoomed in to a reduced shading rate object on the screen, we may see some blockiness, as if it used point/nearest neighbor sampling method, but after some thinking it makes sense, because only a single pixel value is broadcasted to to all neighbors, and no filtering or resolving takes place.</li></ul>
+<ul><li>Also, mip level selection will be different in coarse shaded regions, because derivatives are larger when using larger pixel blocks. This is because samples are farther away from each other. For me personally, it doesn’t matter because the result is blocky anyways. This should be applied at places where the users will notice these less likely anyway. I am not sure how I would handle it with the Tier2 features, but the per draw call rate selection could be balanced with setting a lower mip LOD bias for the samplers in the draw call when there is coarse shading selected.</li></ul>
+<ul><li>Although off screen particles can retain more correct composition with the depth buffer with VRS, if we are rendering soft particles (blending computed in the shader from linear depth buffer and particle plane difference), the soft regions where the depth test is not happening will produce some blockiness:</li></ul>
+<figure><img alt="" decoding="async" height="1107" loading="lazy" src="../../../../wp-content/uploads/2020/09/vrs_softparticle.png" width="1135"/><figcaption><em>There are particles in the foreground, not depth tested and instead blended in the shader which causes blockiness with VRS enabled (left)</em></figcaption></figure>
+<ul><li>Classification<br/>There are many more aspects to consider when classifying tiles for the image based shading rate selection. Right now, the simple thing to try was select increasingly coarser shading rates with increasing minimum title velocity. The other things to consider would be that I can think of and heard of: depth of field focus, depth discontinuity, visible surface detail. All these are most likely fed from the previous frame and reprojected with the current camera matrices. Tweaking and trying all of these will have to wait for me and probably depending on the kind of game/experience one is making. Strategy games will likely not care about motion blur, unlike racing games. </li></ul>
+<p><strong>Performance</strong></p>
+<p>Enabling the VRS gets me a significant performance boost, especially when applying to large geometries, such as the floor in Sponza (that also uses an expensive parallax occlusion mapping shader for displacement mapping), or the large billboard particles that are overlapping and using an expensive lighting shader. Some performance results using RTX 2060, 4k resolution:</p>
+<ul><li>Classification: <br/>0.18ms – from velocity buffer only</li><li>Forward rendering:<br/>5.6ms – stationary camera (full res shading)<br/>1.8ms – moving camera (variable rate shading)<br/>4ms – only floor (with parallax occlusion mapping) set to constant 4×4 shading rate</li><li>Motion blur:<br/>0.75ms – stationary camera (plus curtain moving on screen)<br/>3.6ms – moving camera</li></ul>
+<figure><img alt="" decoding="async" height="1005" loading="lazy" src="../../../../wp-content/uploads/2020/09/vrs_classification.png" width="1912"/><figcaption><em>left: visualizing variable shading rate<br/>right: motion blur amount<br/>Motion blur increases cost when blur amount increases, but VRS reduces cost at the same time</em></figcaption></figure>
+<ul><li>Billboard particle system (large particles close to camera)<br/>4ms – unlit, full resolution shading<br/>3ms – unlit, 4×4 shading rate<br/>24.7ms – shaded, full resolution shading<br/>3.4ms – shaded, 4×4 shading rate</li></ul>
+<figure><img alt="" decoding="async" height="1005" loading="lazy" src="../../../../wp-content/uploads/2020/09/vrs-particletest.png" width="1911"/><figcaption><em>particle performance test – very large particles on screen, overlapping, sampling shadow map and lighting calculation</em></figcaption></figure>
+<p>Thanks for reading, you can read about VRS in more detail in the <a href="https://microsoft.github.io/DirectX-Specs/d3d/VariableRateShading.html">DX12 specs</a>. </p>
+<p>As <a href="https://twitter.com/philiphammer0/status/1302991729394618375">Philip Hammer called out on Twitter</a>, the Nvidia VRS extension is also available in Vulkan, OpenGL and DX11:</p>
+<ul><li><a href="https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_NV_shading_rate_image.html">https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_NV_shading_rate_image.html</a></li><li><a href="https://developer.nvidia.com/vrworks/graphics/variablerateshading">https://developer.nvidia.com/vrworks/graphics/variablerateshading</a></li></ul>
+<p>UPDATE:</p>
+<p>Vulkan now has the cross vendor extension for variable rate shading, called the KHR_fragment_shading_rate. This is somewhat different from the DX12 specs, as the shading rate image needs to be a render pass attachment instead of a separate binding. This is different from the former VK_NV_shading_rate which was closer to DX12 in that regard. The new one follows a more Vulkan-like approach. For the example of implementation, you can look at <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiGraphicsDevice_Vulkan.cpp">Wicked Engine’s Vulkan interface</a>. </p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2020/04/26/capsule-collision-detection/index.html">← Capsule Collision Detection</a>
+            <a class="newer" href="../../../../2021/04/06/bindless-descriptors/index.html">Bindless Descriptors →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

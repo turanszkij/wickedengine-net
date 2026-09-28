@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Future geometry pipeline – Wicked Engine</title>
+    <meta name="description" content="Lately I’ve been interested in modernizing the geometry pipeline in the rendering engine, for example reducing the vertex shaders. It’s a well known fact that geometry shaders are not making efficient use of the GPU…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2021/06/07/future-geometry-pipeline/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Future geometry pipeline</h1>
+        <p class="meta"><time datetime="2021-06-07">June 7, 2021</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>Lately I’ve been interested in modernizing the geometry pipeline in the rendering engine, for example reducing the vertex shaders. It’s a well known fact that <a href="http://www.joshbarczak.com/blog/?p=667">geometry shaders are not making efficient use of the GPU hardware</a>, but similar issues could apply for vertex and tessellation shaders too, just because there is a need for pushing data through multiple pipeline stages. This can result in memory traffic and allocation bottlenecks between geometry and pixel stages. </p>
+<p>For modern rendering effects there is usually a lot of different user data attached to geometry besides positions, and increasing polygon counts, tessellating will increase this data traffic drastically. Sampling of this data ends up on the screen pixels which are more constant in their amount, more predictable. With recent advances in shader programming, like bindless and other new features, it becomes feasible to reduce the load from vertex processing and move more functionality into pixel shaders. Below you will find out what the benefits could be and how it’s done in practice.</p>
+<p>Projected benefits</p>
+<ul><li>We could eliminate vertex shader permutations, which sounds good because managing permutations always makes the program more complicated and slower to make changes. Vertex shader permutations for scene rendering are in most cases only performance minded, unlike pixel shader permutations. It makes sense to separate pixel shaders based on visual distinction, like shading/lighting model, but in my experience the vertex shader permutations exist only to load and provide the minimal amount of data that the pixel shader will require. Often they all transform the positions the same way, just to get them from world space to camera clip space, and loading the rest of the parameters. If we move all data accessing responsibility from vertex shader to pixel shader, we could theoretically get away with having only one vertex shader that is used for every object, that just feeds the rasterizer with the clip space positions.</li><li>Based on the previous point, the ideal vertex shader would only write to SV_Position and maybe SV_ClipDistance, so the majority of memory traffic for other parameters between VS and PS is gone. </li><li>The clipping of triangles takes place after the vertex shader, so a lot of parameter computations are potentially wasted on primitives outside of the camera, unless there is an advanced triangle culling method already implemented. If the parameters are loaded in the pixel shader, then implicitly no work is performed outside of the camera.</li><li>The tessellation, domain and geometry shaders are the most prone to overuse the memory bandwidth by keeping userdata parameters for every vertex, when the amount of vertices will be amplified. It would be great if these shaders could only pass through the positions, but in practice the tessellation usually needs the normal information too [eg. if it’s used for silhouette smoothing], so at least the normal data also needs to be kept around in this case.</li><li>For low polygon count it would seem illogical to perform the per vertex user data loading for every pixel, but the trend of the future is always to increase the number of triangles. When the primitive density approaches pixel size, it starts to make more sense to utilize the pixel shader more than the vertex shader.</li><li>Simpler and less vertex shaders will be more easily rewritten as mesh shaders and utilize more advanced culling strategies.</li><li>Potentially obtain a very similar code path between rasterized and raytraced rendering. In both cases we get a primitive index and barycentric coordinates at the end of the geometry pipeline, and we are expected to interpolate any data we will use in shader code. Though we still have to count with some discrepancies, like in raytracing we must compute mip levels differently than with rasterization. Also, the rasterization work is dispatched with separate draw calls for each mesh usually, which makes the bindless access pattern uniform, since the bindless indices are provided with per draw push constant or constant buffer. With raytracing, we always have to assume that the bindless resource indices are not uniform, hence we need to use the NonUniformResourceIndex() when loading descriptors. These slight discrepancies are just minor technical details, though it would be good if the shader compiler could determine the need for NonUniformResourceIndex() by default, or provided as a compile argument.</li></ul>
+<p>Of course all that means that we move memory load and computations from vertex shader to pixel shader. Pixel shaders for object rendering could be already too heavy. In modern physically based rendering with advanced data structures to compute lighting, and materials often the pixel shaders are using too many registers (this is called register pressure), so putting more burden on them sounds like it could have adverse effects. </p>
+<p>On certain hardware such as AMD GCN, it is already a burden of the pixel shader to load and interpolate the vertex properties passed from vertex shader, but this is done automatically by the driver/shader compiler, not written by the user. The properties arriving from vertex-to pixel shader on this hardware are stored in LDS (groupshared memory). If we get access to the barycentric coordinates and primitive index in the pixel shader, we can do the same kind of interpolation, but we can load the data itself from main memory via bindless access. Loading from main memory is expected to be slower than LDS, but the upside is that LDS doesn’t need to be allocated and populated at draw time. Using this LDS parameter cache can cause a pipeline bottleneck of its own in some cases, which we can avoid this way.</p>
+<p>Next I will show what we need to sample vertex buffers from the pixel shader.</p>
+<p>Bindless resources</p>
+<p>With <a href="../../../../2021/04/06/bindless-descriptors/index.html">bindless</a>, we can access any vertex buffer easily by having their descriptor indices provided somehow to the shader. It can be per draw data like push constants, or a gbuffer containing mesh, instance and primitive IDs (visibility buffer). If there is no bindless, allocating multiple vertex buffers into a single resource and using offsets is a possibility too, but perhaps more inconvenient. The pixel shader can choose which vertex buffers to load from based on what kind of data it needs for its visual effects.</p>
+<p>Primitive ID</p>
+<p>We also need a way to say which 3 vertices to load from the vertex buffer. One way is to use the SV_PrimitiveID semantic as input to the pixel shader. When knowing the primitive ID, we must also refer to the index buffer before loading from the vertex buffer, like this:</p>
+<pre><code class="language-cpp">in uint primitiveID : SV_PrimitiveID;
+// ...
+
+uint i0 = indexbuffers[mesh.ib][primitiveID * 3 + 0];
+uint i1 = indexbuffers[mesh.ib][primitiveID * 3 + 1];
+uint i2 = indexbuffers[mesh.ib][primitiveID * 3 + 2];
+
+float4 v0 = vertexbuffers[mesh.vb][i0];
+float4 v1 = vertexbuffers[mesh.vb][i1];
+float4 v2 = vertexbuffers[mesh.vb][i2];</code></pre>
+<p>This way, the index buffer needs to be read again in the pixel shader (it was already read by the primitive assembly too). The index buffer needs to be both in INDEX_BUFFER and PIXEL_SHADER_RESOURCE states, which is valid (it was not obvious to me at first). </p>
+<p>Using the SV_PrimitiveID might not be free on some architecture. I’ve been told that on some older hardware it might hinder the ability to fully utilize the post transform vertex reuse cache, as it’s handled with attribute on the provoking vertex – just something to keep in mind.</p>
+<p>There is an other way to get access to the vertex indices, by using the GetAttributeAtVertex() function available since HLSL shader model 6.1. This can read an incoming nointerpolation vertex attribute at a zero-based vertex index starting from the provoking vertex in the pixel shader. If the vertex shader sends down the vertexID parameter to the pixel shader (filled in from the SV_VertexID system semantic), the pixel shader can get access to the three vertices making up the primitive. Since SV_VertexID already contains the index buffer based indices, the index buffer is not read again in the PS:</p>
+<pre><code class="language-cpp">uint i0 = GetAttributeAtVertex(psinput.vertexID, 0);
+uint i1 = GetAttributeAtVertex(psinput.vertexID, 1);
+uint i2 = GetAttributeAtVertex(psinput.vertexID, 2);</code></pre>
+<p>It’s also possible to use this in a different way. Instead of passing down the vertexID to the pixel shader, we can also pass down the required vertex parameters without interpolation. When not using interpolation, better data packing is possible:</p>
+<pre><code class="language-cpp">struct VSOut
+{
+  // ...
+  uint normal : TEXCOORD;
+  // ...
+};
+
+// ...
+
+uint n0pack = GetAttributeAtVertex(psinput.normal, 0);
+uint n1pack = GetAttributeAtVertex(psinput.normal, 1);
+uint n2pack = GetAttributeAtVertex(psinput.normal, 2);
+
+float3 n0 = unpack_unorm(n0pack);
+float3 n1 = unpack_unorm(n1pack);
+float3 n2 = unpack_unorm(n2pack);</code></pre>
+<p>The above code can be better than sending down a full float3 normal vector and instead encoding it as R8G8B8_UNORM format, because we save some memory bandwidth and storage cost. On AMD hardware it is expected to be simply better than automatic interpolation, since the interpolation code is executed by the pixel shader as I mentioned before. Unfortunately the automatic interpolation can only be done in full 32-bit float precision as far as I know, but here we can also use half precision which should be sufficient for normals.</p>
+<p>Unfortunately the DXC compiler’s SPIRV backend can’t use the GetAttributeAtVertex() (at this time), so we are out of luck in vulkan, we must use the SV_PrimitiveID.</p>
+<p>After the vertices are loaded, we must perform barycentric interpolation to get the correct attribute at the pixel location.</p>
+<p> Barycentrics</p>
+<p>We can get rasterization hardware provided barycentric coordinates now with HLSL shader model 6.1 in pixel shaders. The SV_Barycentrics sematic can be used as input to the pixel shader and perform manual interpolation with it:</p>
+<pre><code class="language-cpp">in float3 barycentrics : SV_Barycentrics;
+// ...
+
+float4 v0 = vertexbuffers[mesh.vb][i0];
+float4 v1 = vertexbuffers[mesh.vb][i1];
+float4 v2 = vertexbuffers[mesh.vb][i2];
+
+float4 attribute = v0 * barycentrics.x + v1 * barycentrics.y + v2 * barycentrics.z;</code></pre>
+<p>The barycentrics we get are a float3, so three coordinates unlike in raytracing. By comparison, we perform the interpolation in raytracing shaders in a slightly different way:</p>
+<pre><code class="language-cpp">float u = barycentrics.x;
+float v = barycentrics.y;
+float w = 1 - u - v;
+float4 attribute= v0 * w + v1 * u + v2 * v;</code></pre>
+<p>This is needed because they are not guaranteed to be located within the triangle boundary (consider the case when overestimating conservative rasterization is turned on for example), so we cannot safely compute the third coordinate from the first two in rasterization. You can read more about SV_Barycentrics in the <a href="https://github.com/microsoft/DirectXShaderCompiler/wiki/SV_Barycentrics">DXC shader compiler wiki</a>.</p>
+<p>Sadly, the SV_Barycentrics are not widely available if we go beyond DX12. In DX11 they are not available, and in Vulkan they are available only with vendor specific extensions:</p>
+<ul><li><a href="https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_AMD_shader_explicit_vertex_parameter.html">VK_AMD_shader_explicit_vertex_parameter</a></li><li><a href="https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VK_NV_fragment_shader_barycentric.html">VK_NV_fragment_shader_barycentric</a></li></ul>
+<p>I also couldn’t get the Nvidia barycentrics working with DXC compiler’s SPIRV backend at this time as it seemed to only support the AMD one.</p>
+<p>If we cannot get access to hardware provided barycentrics, we could also do the raytracing ourselves. We only need to trace a single triangle in this case with the camera ray (from camera position to pixel view direction) and compute the barycentrics ourselves. This is a ray-triangle intersection HLSL function that we could use:</p>
+<pre><code class="language-cpp">float2 trace_triangle(
+	float3 v0, // vertex 0 position
+	float3 v1, // vertex 1 position
+	float3 v2, // vertex 2 position
+	float3 rayOrigin,
+	float3 rayDirection // normalized
+)
+{
+	float3 v0v1 = v1 - v0;
+	float3 v0v2 = v2 - v0;
+	float3 pvec = cross(rayDirection, v0v2);
+	float det = dot(v0v1, pvec);
+	if (abs(det) &lt; 0.000001)
+		return 0; // ray-tri are parallel
+	float invDet = 1.0f / det;
+	float3 tvec = rayOrigin - v0;
+	float u = dot(tvec, pvec) * invDet;
+	if (u &lt; 0 || u &gt; 1)
+		return 0;
+	float3 qvec = cross(tvec, v0v1);
+	float v = dot(rayDirection, qvec) * invDet;
+	if (v &lt; 0 || u + v &gt; 1)
+		return 0;
+	return float2(u, v); // barycentrics
+}</code></pre>
+<p>This will further add ALU operation cost to the pixel shader however and help in increasing register pressure (which is bad because it’s the most common reason for reduced occupancy).</p>
+<p>Visibility Buffer and Ray tracing</p>
+<p>This method can be used in forward rendering or a <a href="http://www.conffx.com/Visibility_Buffer_GDCE.pdf">visibility buffer</a> like approach too, which is similar to deferred, but instead writing out gbuffer surface parameters, the primitiveID is written out instead. Both methods could use very similar pixel shaders, the only difference being in how they get access to the primitive ID and barycentrics.</p>
+<p>I also see a slightly different method of getting access to the primitive ID, and it is by using ray tracing API. The ray tracing API is designed to get access to primitive ID and barycentrics, but it’s usually not up to the par performance wise with rasterization (for primary rays in general). However, instead of doing full ray tracing primary rays step, we could use the faster rasterizer to rasterize only a depth buffer. The primary rays could then be launched straight from depth buffer with very short rays. This involves reading the depth buffer at every pixel, computing the world space pixel position, then placing the rays onto those positions. Because the ray tracing API cannot handle the case when a ray’s TMin is negative, we simply offset the ray origins by a very small amount towards the camera (considering depth buffer precision).</p>
+<p>The ray tracing in this case can be highly optimized with some ray flags:</p>
+<ul><li>RAY_FLAG_FORCE_OPAQUE because the depth buffer should be already alpha tested, we are sure that we will hit opaque geometry</li><li>RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH because we can be almost completely sure that we will immediately hit the closest geometry (the offset from depth buffer and depth buffer precision could cause errors theoretically)</li></ul>
+<p>This technique can also be used in just select places, for example when a surface parameter is only needed in a raytracing shader, maybe it’s not worth to export it in the gbuffer in the common passes. Or only use it for the pixels which couldn’t be reprojected properly, for example due to disocclusion, but we rely on the previous frame’s result for some reason. In this case the performance penalty is negligible, but it can provide additional consistency and precision in rendering temporal effects. Right now I use it in raytraced reflections: since the gbuffer normals are not rendered at the time the reflections are to be computed, I use the ones from the previous frame and reproject. But disocclusion regions could cause incorrect reflection rays, so in those cases only I compute the actual surface normals right before tracing.</p>
+<p>Performance</p>
+<p>I did some testing only with the Nvidia 2060 RTX GPU at this time and used Nsight to get an idea how the custom interpolation might affect shader performance. At first, I removed every single interpolator from the VS-PS parameter struct except SV_Position and SV_ClipDistance0. </p>
+<p>I had a structure like this (for the most complicated shaders):</p>
+<pre><code class="language-cpp">struct PixelInput
+{
+	precise float4 pos : SV_POSITION;
+	float3 nor : NORMAL;
+	float  clip : SV_ClipDistance0;
+	float4 pre : PREVIOUSPOSITION;
+	float4 color : COLOR;
+	nointerpolation float dither : DITHER;
+	float4 uvsets : UVSETS;
+	float2 atl : ATLAS;
+	float4 tan : TANGENT;
+	float3 pos3D : WORLDPOSITION;
+	uint emissiveColor : EMISSIVECOLOR;
+};</code></pre>
+<p>Get reduced to this, plus sending through the vertex ID to the PS:</p>
+<pre><code class="language-cpp">struct PixelInput
+{
+	precise float4 pos : SV_POSITION;
+	float  clip : SV_ClipDistance0;
+    uint vertexID : VERTEXID;
+};</code></pre>
+<p>Then the pixel shader got a lot of code doing vertex fetching and interpolations. The performance got slightly slower on the Sponza scene for the opaque pass, by 0.3ms. These are the main forward rendering shaders with register pressure bottleneck, so it makes sense that performance would get worse. Interestingly on the Nsight GPU trace, the timings are different from when I am running live with GPU timestamp queries, and the difference was higher there, about 1.5ms slower for the custom interpolation version. For depth prepass shaders it sometimes gets a lot better in the custom interpolation version if the vertex count is very high (tried a simple scene with just lots of instances on the screen, close to pixel sized primitives). After spending a little time with reading about the <a href="https://docs.nvidia.com/nsight-graphics/AdvancedLearning/index.html#gt_units_throughput">Nsight counters</a>, I written down some findings that made sense to me (UP = worsening, DOWN = improving):</p>
+<ul><li>SM throughput goes way UP, becomes main limiting factor (this is work done by shader code)</li><li>PES+VPC throughput goes DOWN (this includes parameter cache allocation, fill and clipping)</li><li>VTG stalled by ISBE allocation DOWN (attribute allocation in vertex shader)</li><li>PS stalled by TRAM allocation/fill DOWN (pixel shader reading interpolated parameters)</li><li>thread instruction divergence goes UP (I assume because of additional branching and buffer loading in the pixel shader)</li></ul>
+<p>I managed to reduce the SM throughput counter drastically by choosing to keep some parameters automatically interpolated, these include ones that require matrix transformations, like normals and previous frame positions. Also, the normals are always packed together with vertex positions currently, so it made more sense to send them down from the vertex shader with the positions, and also because the vertex shader already loads the world matrix for transforming positions and normals.</p>
+<p>I think it could be worth to experiment with manual interpolation like this if your renderer has an actual bottleneck somewhere with the parameter cache in vertex processing. It would be interesting to see what effect it has on other GPUs. There are a lot of configuration opportunities and different scenes to try that can quickly take up all your time if you are not careful. </p>
+<p>Future</p>
+<p>Seems like naively putting everything to custom interpolation was not worth it with this GPU in usual cases, but the exercise was interesting. It is entirely possible that it will pay off when using on a different scene with very high triangle density for example. I lost a bit of interest in this while actually implementing this solution and running into walls like compiler shortcomings and sparsely supported features, but I can still see this technique pop up more in the future as the polygon count becomes closer to cinematic qualities. </p>
+<p>Further reading:</p>
+<ul><li><a href="http://www.conffx.com/Visibility_Buffer_GDCE.pdf">Visibility Buffer</a></li><li><a href="https://michaldrobot.com/2014/05/12/low-level-optimizations-for-gcn-digital-dragons-2014-slides/">Low level optimizations for GCN</a></li></ul>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2021/05/06/graphics-api-abstraction/index.html">← Graphics API abstraction</a>
+            <a class="newer" href="../../../../2022/04/23/shader-compiler-tools/index.html">Shader compiler tools →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

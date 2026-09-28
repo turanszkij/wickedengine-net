@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Resolve an MSAA DepthBuffer – Wicked Engine</title>
+    <meta name="description" content="If you want to implement MSAA (multisampled antialiasing) rendering, you need to render into multismpled render targets. When you want to read an anti aliased rendertarget as a shader resource, first you need to…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2016/11/13/how-to-resolve-an-msaa-depthbuffer/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>How to Resolve an MSAA DepthBuffer</h1>
+        <p class="meta"><time datetime="2016-11-13">November 13, 2016</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>If you want to implement MSAA (multisampled antialiasing) rendering, you need to render into multismpled render targets. When you want to read an anti aliased rendertarget as a shader resource, first you need to resolve it. Resolving means copying it to a non multisampled texture and averaging the subsamples (in D3D11 it is performed by calling ResolveSubresource on the device context). You can quickly find out, that it doesn’t work that way for a depthbuffer.</p>
+<p>When you specify D3D11_BIND_DEPTHSTENCIL when creating a texture, and later try to resolve it, the D3D11 debug layer throws an error, telling you that you can’t do that. You must do the resolve by hand in a shader.</p>
+<p>I chose the compute shader to do the job, because there is less state setup involved. I am doing a min operation on the depth buffer while reading it to get the closest one of the samples to the camera. I think most applications want to do this, but you could also get the 0th sample or the maximum, depending on the computation needs.</p>
+<pre><code>Texture2DMS&amp;lt;float&amp;gt; input : register(t0);
+
+RWTexture2D&amp;lt;float&amp;gt; output : register(u0);
+
+[numthreads(16, 16, 1)]
+
+void main(uint3 dispatchThreadId : SV_DispatchThreadID)
+
+{
+
+uint2 dim;
+
+uint sampleCount;
+
+input.GetDimensions(dim.x, dim.y, sampleCount);
+
+if (dispatchThreadId.x &amp;gt; dim.x || dispatchThreadId.y &amp;gt; dim.y)
+
+{
+
+return;
+
+}
+
+float result = 1;
+
+for (uint i = 0; i &amp;lt; sampleCount; ++i)
+
+{
+
+result = min(result, input.Load(dispatchThreadId.xy, i).r);
+
+}
+
+output[dispatchThreadId.xy] = result;
+
+}
+I call this compute shader like this:
+Dispatch(ceil(screenWidth/16.0f), ceil(screenHeigh/16.0f), 1)
+That's the simplest shader I could do, it just loops over all the samples, and does a min operation on them.
+When dispatching a compute shader with parameters like this, the dispatchThreadID gives us a direct pixel coodinate. Because there could be cases when the resolution is not dividable by the threadcount, we should make sure to discard the out of boundary texture accesses.
+It could also be done with a pixel shader, but I wanted to avoid the state setup of it. In the pixel shader, we woud need to bind rasterizer, depthstencil, and blend states, and even input layouts, vertex buffers or primitive topologies unless we abuse the immediate constant buffer. I want ot avoid state setup whenever possibe because it increases CPU overhead and we can do better here.
+However, I've heard that calling a compute shader in the middle of a rasterization pipeline can incur additional pipeline overhead, I've yet to witness it (comment if you can prove it).
+If I'd like to do a custom resolve for an other type of texture, I would keep the shader as it is, but would change the min operation only for an other one, for example an average, or max, etc...
+That is all I wanted to keep this fairly short.</code></pre>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2016/11/13/abuse-the-immediate-constant-buffer/index.html">← Abuse the immediate constant buffer!</a>
+            <a class="newer" href="../../../../2017/06/05/should-we-get-rid-of-vertex-buffers/index.html">Should we get rid of Vertex Buffers? →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

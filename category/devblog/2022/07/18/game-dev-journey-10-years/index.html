@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game dev journey: 10 years – Wicked Engine</title>
+    <meta name="description" content="10 years ago, I created my first game and became a game developer. Remembering the journey:">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2022/07/18/game-dev-journey-10-years/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Game dev journey: 10 years</h1>
+        <p class="meta"><time datetime="2022-07-18">July 18, 2022</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>10 years ago, I created my first game and became a game developer. Remembering the journey:</p>
+<h2>Before</h2>
+<p>When finishing high school in 2011, I wished that my future job would be as a cool game developer, but I only had experience playing video games. The little programming I did there in classes was boring text-based console applications, and while there, I never went the extra mile beyond completing the homework assignments, always returned to playing video games.</p>
+<h2>First game</h2>
+<p>After high school, I stayed an extra technical year to obtain a certificate in programming, and I was determined to make that year count. I started to work on my first game, a 2D platformer. I was starting out by following <a href="https://youtu.be/ZLxIShw-7ac">Oyyou’s XNA Youtube tutorials</a>. From 2011 to 2012, I completed it in C# XNA, and enjoyed every minute I spent on it. I felt like I created my own little world from nothing. The result looks like this:</p>
+<figure class="video"><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen="allowfullscreen" loading="lazy" src="https://www.youtube.com/embed/ZFkzbkuVEXg" title="My first game, called “Logo” . The name remained from the placeholder logo."></iframe><figcaption>My first game, called “Logo” . The name remained from the placeholder logo.</figcaption></figure>
+<p>Screenshots:</p>
+<figure class="gallery">
+<figure><img alt="" decoding="async" height="1141" src="../../../../wp-content/uploads/2022/07/2022-07-18-9.png" width="1924"/></figure>
+<figure><img alt="" decoding="async" height="1141" loading="lazy" src="../../../../wp-content/uploads/2022/07/2022-07-18-10.png" width="1924"/></figure>
+<figure><img alt="" decoding="async" height="1141" loading="lazy" src="../../../../wp-content/uploads/2022/07/2022-07-18-11.png" width="1924"/></figure>
+<figure><img alt="" decoding="async" height="1141" loading="lazy" src="../../../../wp-content/uploads/2022/07/2022-07-18-12.png" width="1924"/></figure>
+<figure><img alt="" decoding="async" height="1141" loading="lazy" src="../../../../wp-content/uploads/2022/07/2022-07-18-13-1.png" width="1924"/></figure>
+<figure><img alt="" decoding="async" height="1141" loading="lazy" src="../../../../wp-content/uploads/2022/07/2022-07-18-14.png" width="1924"/></figure>
+<figure><img alt="" decoding="async" height="1141" loading="lazy" src="../../../../wp-content/uploads/2022/07/2022-07-18-15.png" width="1924"/></figure>
+<figure><img alt="" decoding="async" height="1141" loading="lazy" src="../../../../wp-content/uploads/2022/07/2022-07-18-16.png" width="1924"/></figure>
+<figure><img alt="" decoding="async" height="1141" loading="lazy" src="../../../../wp-content/uploads/2022/07/2022-07-18-17.png" width="1924"/></figure>
+</figure>
+<p>Major features included:</p>
+<ul><li>hand drawn 2D graphics that I created in <a href="https://www.getpaint.net/index.html">Paint.NET</a></li><li>sprite sheet animations</li><li>multiple “biomes” with their own set of sprites and parallax scrolling backgrounds</li><li>interactive grass animation</li><li>sound effects that I made with my mouth</li><li>42 levels (they were loaded from a tile map txt file where every character represented either empty space, a platform, and enemy or something)</li><li>level editor, custom player level</li><li>1 Boss on the last level</li><li>local 2 player mode</li><li>level up system, weapon switching, etc.</li><li>music ripped from games I really liked at the time</li><li>physical release on a CD with printed label, given to 6 of my classmates and friends, and a public copy with source code to the school </li><li>Full documentation as hard cover book format</li><li>many bugs, day 1 patch for a level that couldn’t be completed</li></ul>
+<h2>Moving to 3D</h2>
+<p>With that game in my backlog, I was super happy, and then tried my hand in 3D graphics. At first it was all very confusing, but going through some XNA 3D tutorials by Riemer’s (lost to time, but there seems to be a <a href="https://github.com/simondarksidej/XNAGameStudio/wiki/RiemersArchiveOverview">revival</a>) I got a nice terrain renderer that I could customize endlessly, which was a lot of fun, and once again I felt like creating a whole world that I can lose myself in completely. The result looked like this:</p>
+<figure class="video"><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen="allowfullscreen" loading="lazy" src="https://www.youtube.com/embed/wZ5AdBAF_tU" title="3D heightmap terrain and effects in XNA"></iframe><figcaption>3D heightmap terrain and effects in XNA</figcaption></figure>
+<p>Main features that I remember:</p>
+<ul><li>load 3D terrain from height map</li><li>shaders</li><li>directional and point lights</li><li>shadow maps</li><li>planar reflections, water</li><li>particle systems</li><li>procedural grass</li><li>post processing</li><li>custom GUI</li></ul>
+<h2>Moving to C++ and DirectX 11</h2>
+<p>Around that time, there was already whispering about deprecating XNA, so I thought I would try my hand in C++ and DirectX 11 (following <a href="http://www.rastertek.com/tutdx11.html">RasterTek tutorials</a>) and create a fighting game. A super early version:</p>
+<figure class="video"><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen="allowfullscreen" loading="lazy" src="https://www.youtube.com/embed/hEiRQeh-qiU" title="(Featuring ripped sprites from Persona 4 Arena and Blazblue)"></iframe><figcaption>(Featuring ripped sprites from Persona 4 Arena and Blazblue)</figcaption></figure>
+<p>A later version:</p>
+<figure class="video"><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen="allowfullscreen" loading="lazy" src="https://www.youtube.com/embed/59dzPR9_wt8" title="More effects, 3D objects ported over from my XNA terrain, and some things resembling gameplay"></iframe><figcaption>More effects, 3D objects ported over from my XNA terrain, and some things resembling gameplay</figcaption></figure>
+<p>This would later turn into Wicked Engine, but at this time I thought I would create my own fighting game, by implementing aspects I seen in other arcade japanese fighters. At this point, it was not an engine, just straight up game in c++. I think some parts of its code still remain in my current work, but most of it was refactored and completely changed.</p>
+<h2>Releasing games</h2>
+<p>Meanwhile, I put this project on hold for a while, and decided to release simpler games in something I have more experience with – XNA. This resulted in me releasing 3 mobile games in a short period (half year maybe):</p>
+<p>1) Breaker Master, a breakout clone with animated hand drawn style graphics, released for Windows Phone and Android. Had a simple story, bosses with pong style gameplay mixed in, chain reactions, particle systems, pickups, I think it was quite fun. It also featured a store where you could buy some backgrounds in exchange for your  in-game points:</p>
+<figure class="gallery">
+<figure><img alt="" decoding="async" height="814" loading="lazy" src="../../../../wp-content/uploads/2022/07/breaker_master_1.png" width="488"/></figure>
+<figure><img alt="" decoding="async" height="813" loading="lazy" src="../../../../wp-content/uploads/2022/07/breaker_master_2.png" width="488"/></figure>
+<figure><img alt="" decoding="async" height="812" loading="lazy" src="../../../../wp-content/uploads/2022/07/breaker_master_3.png" width="488"/></figure>
+<figure><img alt="" decoding="async" height="813" loading="lazy" src="../../../../wp-content/uploads/2022/07/breaker_master_4.png" width="489"/></figure>
+<figure><img alt="" decoding="async" height="812" loading="lazy" src="../../../../wp-content/uploads/2022/07/breaker_master_5-1.png" width="489"/></figure>
+<figure><img alt="" decoding="async" height="814" loading="lazy" src="../../../../wp-content/uploads/2022/07/breaker_master_6.png" width="489"/></figure>
+<figure><img alt="" decoding="async" height="816" loading="lazy" src="../../../../wp-content/uploads/2022/07/breaker_master_7.png" width="492"/></figure>
+<figure><img alt="" decoding="async" height="814" loading="lazy" src="../../../../wp-content/uploads/2022/07/breaker_master_8.png" width="486"/></figure>
+</figure>
+<p><em>Breaker Master,</em> a breakout clone</p>
+<p>2) Space Accelerator, an endless runner type 3D game, where you control a space ship, avoiding asteroids, while picking up coins and fuel, for Windows Phone and Android. It also had a global leaderboard and achievements backed by the OpenXLive API (chinese version of XBox Live). The in-game shop was copied over from Breaker Master, but here you could buy ships and avatars too. This was the most successful game, that was downloaded over 30 000 times (the free version):</p>
+<figure class="gallery">
+<figure><img alt="" decoding="async" height="487" loading="lazy" src="../../../../wp-content/uploads/2022/07/space_accelerator_1.png" width="815"/></figure>
+<figure><img alt="" decoding="async" height="488" loading="lazy" src="../../../../wp-content/uploads/2022/07/space_accelerator_2.png" width="814"/></figure>
+<figure><img alt="" decoding="async" height="488" loading="lazy" src="../../../../wp-content/uploads/2022/07/space_accelerator_3.png" width="813"/></figure>
+<figure><img alt="" decoding="async" height="487" loading="lazy" src="../../../../wp-content/uploads/2022/07/space_accelerator_4.png" width="813"/></figure>
+<figure><img alt="" decoding="async" height="490" loading="lazy" src="../../../../wp-content/uploads/2022/07/space_accelerator_5.png" width="814"/></figure>
+<figure><img alt="" decoding="async" height="491" loading="lazy" src="../../../../wp-content/uploads/2022/07/space_accelerator_6.png" width="816"/></figure>
+<figure><img alt="" decoding="async" height="489" loading="lazy" src="../../../../wp-content/uploads/2022/07/space_accelerator_7.png" width="815"/></figure>
+</figure>
+<p><em>Space Accelerator, and endless runner clone</em></p>
+<p>I’m glad that I also made a video:</p>
+<figure class="video"><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen="allowfullscreen" loading="lazy" src="https://www.youtube.com/embed/0ZO7yx-F_wY" title="YouTube video"></iframe></figure>
+<p>3) Splash Bugs, a rip off of a PSP homebrew game that I think was called “Bugz”. Basically, a number of bugs moved on the screen randomly, and you could tap the screen to spawn an explosion, which could result in a chain reaction. I was really addicted to that for a few days back in the day. Windows Phone only:</p>
+<figure class="gallery">
+<figure><img alt="" decoding="async" height="488" loading="lazy" src="../../../../wp-content/uploads/2022/07/splash_bugs_1.png" width="814"/></figure>
+<figure><img alt="" decoding="async" height="487" loading="lazy" src="../../../../wp-content/uploads/2022/07/splash_bugs_2.png" width="814"/></figure>
+<figure><img alt="" decoding="async" height="487" loading="lazy" src="../../../../wp-content/uploads/2022/07/splash_bugs_3.png" width="814"/></figure>
+<figure><img alt="" decoding="async" height="489" loading="lazy" src="../../../../wp-content/uploads/2022/07/splash_bugs_4.png" width="814"/></figure>
+<figure><img alt="" decoding="async" height="489" loading="lazy" src="../../../../wp-content/uploads/2022/07/splash_bugs_5.png" width="815"/></figure>
+<figure><img alt="" decoding="async" height="489" loading="lazy" src="../../../../wp-content/uploads/2022/07/splash_bugs_6.png" width="815"/></figure>
+<figure><img alt="" decoding="async" height="489" loading="lazy" src="../../../../wp-content/uploads/2022/07/splash_bugs_7.png" width="814"/></figure>
+</figure>
+<p><em>Splash Bugs, a clone of PSP homebrew called Bugz</em></p>
+<p>Sadly, these games can no longer be found, because they were removed from the stores. It was even hard to find images of them on the web. I will probably never develop mobile games again, because they can just get removed from app stores on a whim, and I don’t play on mobile phone anyway. I haven’t made any money from them worth to mention, because so few people bought them, and the free versions didn’t generate any profit worth to mention from the ads. But at least my friends bought them. That’s not to say that I regret making them, because I got some real experience and memories from the process. </p>
+<h2>Getting a job</h2>
+<p>Then I returned a bit refreshed into C++ and DirectX 11, and continued developing a fighting game. I soon added many shader effects, 3D characters, deferred rendering, which looked like this after a while: </p>
+<figure class="video"><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen="allowfullscreen" loading="lazy" src="https://www.youtube.com/embed/nNlfkrURqZQ?start=575" title="YouTube video"></iframe></figure>
+<p>You may notice that the larger part of the video is 3D graphics showcase, rather than fighting game, and this is actually a turning point in my gamedev story.</p>
+<p>You see, at this time I was attending a university, but also started to try applying to jobs and sending in demos and videos that I made. First one was Gameloft’s Budapest office, which I got an invite for an interview, but didn’t pass it. Second one that I got a chance for was Neocore Games in Budapest, and I managed to get a job as an engine programmer, which I am eternally grateful for.</p>
+<p><a href="https://neocoregames.com/">Neocore Games</a> is a big name studio in Hungary, responsible of creating many successful games, like Adventures of Van Helsing series, The King’s Crusade, Deathtrap, King Arthur, Warhammer 40K: Inquisitor (which I mainly worked on). Their current project is very interesting tactical RPG: <a href="https://store.steampowered.com/app/1157390/King_Arthur_Knights_Tale/">King Arthur: A Knight’s Tale</a></p>
+<p>Shortly after getting the job, I left university (university was free in Hungary, if you brought sufficiently good grades from high school). I felt like it was not supporting my aspirations as a graphics programmer, and holding me back instead. While working on a game to be released, I was learning so much, that I don’t regret this decision at all.</p>
+<p>A bit more than 3 years at Neocore games was enough for me to drastically improve in 3D engine development. I also continued working on my fighting game in my free time sometimes, and at some point the fighting game got removed, and what remained was an engine that I started calling “Wicked Engine”, and a 3D scene editor for it.</p>
+<p>At this time, I also experienced console development, porting the in house graphics engine (called CoreTech, a battle tested engine, used to release all of their games) to PlayStation 4 system, which opened my eyes and really wanted to do more with consoles, that I just couldn’t focus on there as much. I started applying to many companies abroad, and one of those was PlayStation’s Developer Technology Group in London, a job which I managed to get.</p>
+<p>The DevTech job was interesting and challenging in many ways. We dealt with lots of different companies, and tried to help in their development efforts for PlayStation console. I was there for nearly 4 years, and no longer work there, but this now reached present days.</p>
+<h2>Closing</h2>
+<p>Currently I am still working on the Wicked Engine, which turned out to be a huge project, but something I thoroughly enjoy making. Looking back on my progress brings great deal of nostalgia and satisfaction. It was a great idea to document my progress as videos along the years, they are very fun to watch back. I wish some of the older games and projects I’d had retained better, because some of those are lost to time unfortunately.</p>
+<p>If I can give advice to anyone wishing to start a career in game development, I would suggest to start creating a game as soon as possible. That doesn’t mean “next month”, but today or tomorrow if you can. Start with a simple program that can read your WASD input, and move a rectangle or image on the screen. Then try to implement a simple existing 2D game concept, like a breakout clone or platformer. Look up a tutorial and finish it. Once you are past this, and enjoyed it, then you became a game developer, and the rest will happen automatically, if you don’t stop.</p>
+<p>Thank you for reading!</p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2022/05/08/derivatives-in-compute-shader/index.html">← Derivatives in compute shader</a>
+            <a class="newer" href="../../../../2022/09/23/animation-retargeting/index.html">Animation Retargeting →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

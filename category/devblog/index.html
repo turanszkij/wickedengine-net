@@ -2,14 +2,211 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="refresh" content="0; url=https://turanszkij.wordpress.com/category/devblog">
-    <title>Redirecting to Devblog...</title>
-    <script>
-        window.location.href = "https://turanszkij.wordpress.com/category/devblog";
-    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wicked Engine - Devblog</title>
+    <meta name="description" content="Development notes for Wicked Engine.">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/">
+    <link rel="stylesheet" href="../../style.css">
+    <link rel="icon" type="image/png" href="../../favicon.png">
 </head>
 <body>
-    <p>Redirecting you to the Devblog...</p>
-    <p>If you are not redirected automatically, <a href="https://turanszkij.wordpress.com/category/devblog">click here</a>.</p>
+
+    <header>
+        <h1><a href="../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../index.html">Home</a>
+            <a href="../../downloads.html">Downloads</a>
+            <a href="../../blog.html" class="active">Blog</a>
+            <a href="../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post-index">
+        <h1>Devblog</h1>
+        <p>Development notes for Wicked Engine.</p>
+        <ul class="post-list">
+        <li>
+            <time datetime="2026-05-24">May 24, 2026</time>
+            <a href="2026/05/24/new-website/index.html">New website</a>
+            <p>The wordpress site is no longer updated, from now on the Wicked Engine website will be updated only at: https://wickedengine.net/</p>
+        </li>
+        <li>
+            <time datetime="2024-12-10">December 10, 2024</time>
+            <a href="2024/12/10/wicked-engines-graphics-in-2024/index.html">Wicked Engine’s graphics in 2024</a>
+            <p>We are near the end of 2024 and I wanted to write up a long post about the current state of the rendering in Wicked Engine. If you are interested in graphics programming, then strap yourself in for a long read…</p>
+        </li>
+        <li>
+            <time datetime="2024-06-02">June 2, 2024</time>
+            <a href="2024/06/02/texture-streaming/index.html">Texture Streaming</a>
+            <p>Texture streaming is an important feature of modern 3D engines as it is can be the largest contributor to reducing loading times and memory usage. Wicked Engine just got the first implementation of this system, and…</p>
+        </li>
+        <li>
+            <time datetime="2023-11-16">November 16, 2023</time>
+            <a href="2023/11/16/dynamic-vertex-formats/index.html">Dynamic vertex formats</a>
+            <p>There are a variety of ways to send vertex data to the GPU. Since DX12 and Vulkan, we can choose to use the old-school input layouts definitions in the pipeline state, or using descriptors, which became much more…</p>
+        </li>
+        <li>
+            <time datetime="2023-05-07">May 7, 2023</time>
+            <a href="2023/05/07/vulkan-video-decoding/index.html">Vulkan Video Decoding</a>
+            <p>Recently the Vulkan API received an exciting new feature, which is video decoding, utilizing the built-in fixed function video unit found in many GPUs. This allows to the writing of super fast cross-platform video…</p>
+        </li>
+        <li>
+            <time datetime="2022-11-08">November 8, 2022</time>
+            <a href="2022/11/08/graphics-api-secrets-format-casting/index.html">Graphics API secrets: format casting</a>
+            <p>If you spend a long enough time in graphics development, the time will come eventually when you want to cast between different formats of a GPU resource. The problem is that information about how to do this was a bit…</p>
+        </li>
+        <li>
+            <time datetime="2022-09-23">September 23, 2022</time>
+            <a href="2022/09/23/animation-retargeting/index.html">Animation Retargeting</a>
+            <p>I recently implemented animation retargeting, something that’s not frequently discussed on the internet in detail. My goal was specifically to copy animations between similar types of skeletons: humanoid to humanoid.…</p>
+        </li>
+        <li>
+            <time datetime="2022-07-18">July 18, 2022</time>
+            <a href="2022/07/18/game-dev-journey-10-years/index.html">Game dev journey: 10 years</a>
+            <p>10 years ago, I created my first game and became a game developer. Remembering the journey:</p>
+        </li>
+        <li>
+            <time datetime="2022-05-08">May 8, 2022</time>
+            <a href="2022/05/08/derivatives-in-compute-shader/index.html">Derivatives in compute shader</a>
+            <p>This post shows a way to compute derivatives for texture filtering in compute shaders (for visibility buffer shading). I was missing a step-by-step explanation of how to do this, but after some trial and error, the…</p>
+        </li>
+        <li>
+            <time datetime="2022-04-23">April 23, 2022</time>
+            <a href="2022/04/23/shader-compiler-tools/index.html">Shader compiler tools</a>
+            <p>Wicked Engine used Visual Studio to compile all its shaders for a long time, but that changed around a year ago (in 2021) when custom shader compiling tools were implemented. This blog highlights the benefits of this…</p>
+        </li>
+        <li>
+            <time datetime="2021-06-07">June 7, 2021</time>
+            <a href="2021/06/07/future-geometry-pipeline/index.html">Future geometry pipeline</a>
+            <p>Lately I’ve been interested in modernizing the geometry pipeline in the rendering engine, for example reducing the vertex shaders. It’s a well known fact that geometry shaders are not making efficient use of the GPU…</p>
+        </li>
+        <li>
+            <time datetime="2021-05-06">May 6, 2021</time>
+            <a href="2021/05/06/graphics-api-abstraction/index.html">Graphics API abstraction</a>
+            <p>Wicked Engine can handle today’s advanced rendering effects, with multiple graphics APIs (DX11, DX12 and Vulkan at the time of writing this). The key to enable this is to use a good graphics abstraction, so these…</p>
+        </li>
+        <li>
+            <time datetime="2021-04-06">April 6, 2021</time>
+            <a href="2021/04/06/bindless-descriptors/index.html">Bindless Descriptors</a>
+            <p>The Vulkan and DX12 graphics devices now support bindless descriptors in Wicked Engine. Earlier and in DX11, it was only possible to access textures, buffers (resource descriptors) and samplers in the shaders by…</p>
+        </li>
+        <li>
+            <time datetime="2020-09-06">September 6, 2020</time>
+            <a href="2020/09/06/variable-rate-shading-first-impressions/index.html">Variable Rate Shading: first impressions</a>
+            <p>Variable Rate Shading (VRS) is a new DX12 feature introduced recently, that can be used to control shading rate. To be more precise, it is used to reduce shading rate, as opposed to the Multi Sampling Anti Aliasing…</p>
+        </li>
+        <li>
+            <time datetime="2020-04-26">April 26, 2020</time>
+            <a href="2020/04/26/capsule-collision-detection/index.html">Capsule Collision Detection</a>
+            <p>Capsule shapes are useful tools for handling simple game physics. Here you will find out why and how to detect and handle collisions between capsule and triangle mesh, as well as with other capsules, without using a…</p>
+        </li>
+        <li>
+            <time datetime="2020-01-05">January 5, 2020</time>
+            <a href="2020/01/05/tile-based-optimization-for-post-processing/index.html">Tile-based optimization for post processing</a>
+            <p>One way to optimize heavy post processing shaders is to determine which parts of the screen could use a simpler version. The simplest form of this is use branching in the shader code to early exit or switch to a…</p>
+        </li>
+        <li>
+            <time datetime="2019-09-29">September 29, 2019</time>
+            <a href="2019/09/29/entity-component-system/index.html">Entity-component system</a>
+            <p>Here goes my idea of an entity-component system written in C++. I’ve been using this in my home-made game engine, Wicked Engine for exactly a year now and I am still very happy with it. The focus is on simplicity and…</p>
+        </li>
+        <li>
+            <time datetime="2019-09-22">September 22, 2019</time>
+            <a href="2019/09/22/improved-normal-reconstruction-from-depth/index.html">Improved normal reconstruction from depth</a>
+            <p>In a 3D renderer, we might want to read the scene normal vectors at some point, for example post processes. We can write them out using MRT – multiple render target outputs from the object rendering shaders and write…</p>
+        </li>
+        <li>
+            <time datetime="2019-02-24">February 24, 2019</time>
+            <a href="2019/02/24/thoughts-on-light-culling-stream-compaction-vs-flat-bit-arrays/index.html">Thoughts on light culling: stream compaction vs flat bit arrays</a>
+            <p>I had my eyes set on the light culling using flat bit arrays technique for a long time now and finally decided to give it a try. Let me share my notes on why it seemed so interesting and why I replaced the stream…</p>
+        </li>
+        <li>
+            <time datetime="2018-11-24">November 24, 2018</time>
+            <a href="2018/11/24/simple-job-system-using-standard-c/index.html">Simple job system using standard C++</a>
+            <p>After experimenting with the entity-component system this fall, I wanted to see how difficult it would be to put my other unused CPU cores to good use. I never really got into CPU multithreading seriously, so this is…</p>
+        </li>
+        <li>
+            <time datetime="2018-05-21">May 21, 2018</time>
+            <a href="2018/05/21/scalabe-gpu-fluid-simulation/index.html">GPU Fluid Simulation</a>
+            <p>Let’s take a look at how to efficiently implement a particle based fluid simulation for real time rendering. We will be running a Smooth Particle Hydrodynamics (SPH) simulation on the GPU. This post is intended for…</p>
+        </li>
+        <li>
+            <time datetime="2018-02-03">February 3, 2018</time>
+            <a href="2018/02/03/thoughts-on-skinning-and-lds/index.html">Thoughts on Skinning and LDS</a>
+            <p>I’m letting out some thoughts on using LDS memory as a means to optimize a skinning compute shader. Consider the following workload: each thread is responsible for animating a single vertex, so it loads the vertex…</p>
+        </li>
+        <li>
+            <time datetime="2018-01-18">January 18, 2018</time>
+            <a href="2018/01/18/easy-transparent-shadow-maps/index.html">Easy Transparent Shadow Maps</a>
+            <p>Supporting transparencies with traditional shadow mapping is straight forward and allows for nice effects but as with anything related to rendering transparents with rasterization, there are corner cases. Little…</p>
+        </li>
+        <li>
+            <time datetime="2018-01-10">January 10, 2018</time>
+            <a href="2018/01/10/optimizing-tile-based-light-culling/index.html">Optimizing tile-based light culling</a>
+            <p>Tile-based lighting techniques like Forward+ and Tiled Deferred rendering are widely used these days. With the help of such technique we can efficiently query every light affecting any surface. But a trivial…</p>
+        </li>
+        <li>
+            <time datetime="2018-01-05">January 5, 2018</time>
+            <a href="2018/01/05/next-power-of-two-in-hlsl/index.html">Next power of two in HLSL</a>
+            <p>There are many occasions when a programmer would want to calculate the next power of two for a given number. For me it was a bitonic sorting algorithm operating in a compute shader and I had this piece of code be…</p>
+        </li>
+        <li>
+            <time datetime="2017-11-07">November 7, 2017</time>
+            <a href="2017/11/07/gpu-based-particle-simulation/index.html">GPU-based particle simulation</a>
+            <p>I finally took the leap and threw out my old CPU-based particle simulation code and ventured to GPU realms with it. The old system could spawn particles on the surface on a mesh with a starting velocity of each…</p>
+        </li>
+        <li>
+            <time datetime="2017-10-22">October 22, 2017</time>
+            <a href="2017/10/22/which-blend-state-for-me/index.html">Which blend state for me?</a>
+            <p>If you are familiar with creating graphics applications, you are probably somewhat familiar with different blending states. If you are like me, then you were not overly confident in using them, and got some basics…</p>
+        </li>
+        <li>
+            <time datetime="2017-10-12">October 12, 2017</time>
+            <a href="2017/10/12/forward-decal-rendering/index.html">Forward+ decal rendering</a>
+            <p>Drawing decals in deferred renderers is quite simple, straight forward and efficient: Just render boxes like you render the lights, read the gbuffer in the pixel shader, project onto the surface, then sample and…</p>
+        </li>
+        <li>
+            <time datetime="2017-09-09">September 9, 2017</time>
+            <a href="2017/09/09/skinning-in-compute-shader/index.html">Skinning in a Compute Shader</a>
+            <p>Recently I have moved my mesh skinning implementation from a streamout geometry shader to compute shader. One reason for this was the ugly API for the streamout which I wanted to leave behind, but the more important…</p>
+        </li>
+        <li>
+            <time datetime="2017-09-07">September 7, 2017</time>
+            <a href="2017/09/07/area-lights/index.html">Area Lights</a>
+            <p>I am trying to get back into blogging. I thought writing about implementing area light rendering might help me with that.</p>
+        </li>
+        <li>
+            <time datetime="2017-08-30">August 30, 2017</time>
+            <a href="2017/08/30/voxel-based-global-illumination/index.html">Voxel-based Global Illumination</a>
+            <p>There are several use cases of a voxel data structure. One interesting application is using it to calculate global illumination. There are a couple of techniques for that, too. I have chosen the voxel cone tracing…</p>
+        </li>
+        <li>
+            <time datetime="2017-06-05">June 5, 2017</time>
+            <a href="2017/06/05/should-we-get-rid-of-vertex-buffers/index.html">Should we get rid of Vertex Buffers?</a>
+            <p>TLDR: If your only platform to support is a recent AMD GPU, or console, then yes. 🙂 I am working on a “game engine” nowadays but mainly focusing on the rendering aspect. I wanted to get rid of some APIs lately in my…</p>
+        </li>
+        <li>
+            <time datetime="2016-11-13">November 13, 2016</time>
+            <a href="2016/11/13/how-to-resolve-an-msaa-depthbuffer/index.html">How to Resolve an MSAA DepthBuffer</a>
+            <p>If you want to implement MSAA (multisampled antialiasing) rendering, you need to render into multismpled render targets. When you want to read an anti aliased rendertarget as a shader resource, first you need to…</p>
+        </li>
+        <li>
+            <time datetime="2016-11-13">November 13, 2016</time>
+            <a href="2016/11/13/abuse-the-immediate-constant-buffer/index.html">Abuse the immediate constant buffer!</a>
+            <p>Very often, I need to draw simple geometries, like cubes, and I want to do the minimal amount of graphics state setup. With this technique, you don’t have to set up a vertex buffer or input layout, which means, we…</p>
+        </li>
+        <li>
+            <time datetime="2016-11-04">November 4, 2016</time>
+            <a href="2016/11/04/smooth-lens-flare-in-the-geometry-shader/index.html">Smooth Lens Flare in the Geometry Shader</a>
+            <p>This is a historical feature from the Wicked Engine, meaning it was implemented a few years ago, but at the time it was a big step for me. I wanted to implement simple textured lens flares but at the time all I could…</p>
+        </li>
+        <li>
+            <time datetime="2016-11-01">November 1, 2016</time>
+            <a href="2016/11/01/welcome-brave-developer/index.html">Welcome brave developer!</a>
+            <p>This is a blog containing development insight to my game engine, Wicked Engine. Feel free to rip off any code, example, techinque from here, as you could also do it from the open source engine itself:…</p>
+        </li>
+        </ul>
+    </article>
+
 </body>
 </html>

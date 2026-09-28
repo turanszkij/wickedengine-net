@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abuse the immediate constant buffer! – Wicked Engine</title>
+    <meta name="description" content="Very often, I need to draw simple geometries, like cubes, and I want to do the minimal amount of graphics state setup. With this technique, you don’t have to set up a vertex buffer or input layout, which means, we…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2016/11/13/abuse-the-immediate-constant-buffer/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Abuse the immediate constant buffer!</h1>
+        <p class="meta"><time datetime="2016-11-13">November 13, 2016</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>Very often, I need to draw simple geometries, like cubes, and I want to do the minimal amount of graphics state setup. With this technique, you don’t have to set up a vertex buffer or input layout, which means, we don’t have to write the boilerplate resource creation code for them, and don’t have to call the binding code, which also lightens the API overhead.</p>
+<p>An immediate constant buffer differs from a regular constant buffer in a few aspects:</p>
+<ul>
+<li>There is a reserved constant buffer slot for them, and there can be only one of them at the same time.</li>
+<li>They are created automatically from the <strong>static const</strong> variables in your hlsl code.</li>
+<li>They can not be updated from the API.</li>
+</ul>
+<p>So when I declare a vertex array inside a shader, for example, like this:</p>
+<pre><code>static const float4 CUBE[]={
+
+float4(-1.0,1.0,1.0,1.0),
+
+float4(-1.0,-1.0,1.0,1.0),
+
+float4(-1.0,-1.0,-1.0,1.0),
+
+float4(1.0,1.0,1.0,1.0),
+
+float4(1.0,-1.0,1.0,1.0),
+
+float4(-1.0,-1.0,1.0,1.0),
+
+float4(1.0,1.0,-1.0,1.0),
+
+float4(1.0,-1.0,-1.0,1.0),
+
+float4(1.0,-1.0,1.0,1.0),
+
+float4(-1.0,1.0,-1.0,1.0),
+
+float4(-1.0,-1.0,-1.0,1.0),
+
+float4(1.0,-1.0,-1.0,1.0),
+
+float4(-1.0,-1.0,1.0,1.0),
+
+float4(1.0,-1.0,1.0,1.0),
+
+float4(1.0,-1.0,-1.0,1.0),
+
+float4(1.0,1.0,1.0,1.0),
+
+float4(-1.0,1.0,1.0,1.0),
+
+float4(-1.0,1.0,-1.0,1.0),
+
+float4(-1.0,1.0,-1.0,1.0),
+
+float4(-1.0,1.0,1.0,1.0),
+
+float4(-1.0,-1.0,-1.0,1.0),
+
+float4(-1.0,1.0,1.0,1.0),
+
+float4(1.0,1.0,1.0,1.0),
+
+float4(-1.0,-1.0,1.0,1.0),
+
+float4(1.0,1.0,1.0,1.0),
+
+float4(1.0,1.0,-1.0,1.0),
+
+float4(1.0,-1.0,1.0,1.0),
+
+float4(1.0,1.0,-1.0,1.0),
+
+float4(-1.0,1.0,-1.0,1.0),
+
+float4(1.0,-1.0,-1.0,1.0),
+
+float4(-1.0,-1.0,-1.0,1.0),
+
+float4(-1.0,-1.0,1.0,1.0),
+
+float4(1.0,-1.0,-1.0,1.0),
+
+float4(1.0,1.0,-1.0,1.0),
+
+float4(1.0,1.0,1.0,1.0),
+
+float4(-1.0,1.0,-1.0,1.0),
+
+};
+...and if I want to draw this cube, then the simplest vertex shader should look like this:
+float4 main(uint vID : SV_VERTEXID) : SV_Position
+
+{
+
+return mul(CUBE[vID], g_xTransform);
+
+}
+(where g_xTransform is the World*View*Projection matrix from a regular constant buffer)
+I would then call the Draw from the DX11 API with a vertexcount of 36 because that is the array length of the CUBE vertex array. The shader automatically gets the SV_VERTEXID semantic from the input assembler, which directly indexes into the vertex array. I find this technique very clean both from the C++ side and the shader side, so I use it very frequently.
+A few example use-cases:
+
+Deferred light geometries
+Light volume geometries
+Occlusion culling occludees
+Decals
+Skybox/skysphere
+Light probe debug geometries
+
+If you need vertex arrays like this for some other simple meshes:
+
+Cone
+Icosphere
+UV Sphere
+Circle
+Cube
+Quad
+
+That's it, cheers!</code></pre>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2016/11/04/smooth-lens-flare-in-the-geometry-shader/index.html">← Smooth Lens Flare in the Geometry Shader</a>
+            <a class="newer" href="../../../../2016/11/13/how-to-resolve-an-msaa-depthbuffer/index.html">How to Resolve an MSAA DepthBuffer →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

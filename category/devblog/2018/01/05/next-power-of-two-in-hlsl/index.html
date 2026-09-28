@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Next power of two in HLSL – Wicked Engine</title>
+    <meta name="description" content="There are many occasions when a programmer would want to calculate the next power of two for a given number. For me it was a bitonic sorting algorithm operating in a compute shader and I had this piece of code be…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2018/01/05/next-power-of-two-in-hlsl/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Next power of two in HLSL</h1>
+        <p class="meta"><time datetime="2018-01-05">January 5, 2018</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>There are many occasions when a programmer would want to calculate the next power of two for a given number. For me it was a bitonic sorting algorithm operating in a compute shader and I had this piece of code be responsible for calculating the next power of two of a number:</p>
+<pre><code>uint myNumberPowerOfTwo = 1;
+while( myNumberPowerOfTwo &lt; myNumber)
+{
+   myNumberPowerOfTwo &lt;&lt;= 1;
+}</code></pre>
+<p>It gets the job done, but doesn’t look so nice. For not unusual cases when <em>myNumber</em> is more than 1000 it can already take ten cycles to loop. I recently learned that HLSL has a built in function called <a href="https://msdn.microsoft.com/en-us/library/windows/desktop/ff471400(v=vs.85).aspx">firstbithigh</a>. It returns the position of the first non zero bit in a 32-bit number starting from the left to the right (from high order to low). With its help, we can rewrite the algorithm as follows:</p>
+<pre><code>uint myNumberPowerOfTwo = 2 &lt;&lt; firstbithigh(myNumber);</code></pre>
+<p>It does the same thing, so how does it work? Take a random number and write it in binary:</p>
+<p>00000001011010011011011111000100</p>
+<p>For that number, <em>firstbithigh</em> returns the number of the location of the first non zero bit (from the left), which is 24. The next power of two to that number would be:</p>
+<p>00000010000000000000000000000000</p>
+<p>That number has seven leading zeroes. All we have to do is zero the whole number but set a single bit to non-zero. To do it, first set up 2 in binary:</p>
+<p>00000000000000000000000000000010</p>
+<p>Then shift the whole thing left by the position of the first bit in <em>myNumber</em> to get what we are looking for:</p>
+<p>00000010000000000000000000000000</p>
+<p>Nice one, but we have a few corner cases we need to eliminate. If <em>myNumber</em> is already a power of two, we will get a greater power of two which might not be what we are looking for. In that case we should return <em>myNumber</em> itself. If you subtract one from <em>myNumber</em> before calling <em>firstbithigh</em> on it, it will ensure that power of two numbers will return themselves:</p>
+<pre><code>uint myNumberPowerOfTwo = 2 &lt;&lt; firstbithigh(myNumber - 1);</code></pre>
+<p>Take 1024 for example, it will get the next power of two for 1023 which is 1024. Or take 129 for example, it will get the next power of two for 128 which is 256, so works out quite well. If you try to calculate it for 0 however, there is a potential bug if <em>myNumber</em> is unsigned, as -1 in unsigned would wrap around to <em>0xFFFFFFFF</em>. If you can potentially call it for zeroes and operate on unsigned, I would suggest doing it like this:</p>
+<pre><code>uint myNumberPowerOfTwo = 2 &lt;&lt; firstbithigh(max(1, myNumber) - 1);</code></pre>
+<p>If it is signed int, then you don’t have to worry about it, as the <em>firstbithigh</em> function will return zero for negative numbers.</p>
+<p>Have any question, noticed a mistake? Please post in the comments below!</p>
+<p>Thank you for reading!</p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2017/11/07/gpu-based-particle-simulation/index.html">← GPU-based particle simulation</a>
+            <a class="newer" href="../../../../2018/01/10/optimizing-tile-based-light-culling/index.html">Optimizing tile-based light culling →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

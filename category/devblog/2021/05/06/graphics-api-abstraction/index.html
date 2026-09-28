@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graphics API abstraction – Wicked Engine</title>
+    <meta name="description" content="Wicked Engine can handle today’s advanced rendering effects, with multiple graphics APIs (DX11, DX12 and Vulkan at the time of writing this). The key to enable this is to use a good graphics abstraction, so these…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2021/05/06/graphics-api-abstraction/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Graphics API abstraction</h1>
+        <p class="meta"><time datetime="2021-05-06">May 6, 2021</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>Wicked Engine can handle <a href="https://github.com/turanszkij/WickedEngine/blob/master/features.txt">today’s advanced rendering effects</a>, with multiple graphics APIs (DX11, DX12 and Vulkan at the time of writing this). The key to enable this is to use a good graphics abstraction, so these complicated algorithms only need to be written once.</p>
+<p>A common interface is developed that all game engine code can use to define rendering intentions without knowing which API is executed with. The interface can be categorized as:</p>
+<ul><li>resources</li><li>device</li></ul>
+<p>Let’s review them below.</p>
+<p>Resources</p>
+<p>These are simple data structures, without any functionality. They could be really simple, even plain old data (POD) types, for example descriptor structures or enums.</p>
+<p>For example all the possible cull modes are described as an enum:</p>
+<pre><code class="language-cpp">enum CULL_MODE
+{
+	CULL_NONE,
+	CULL_FRONT,
+	CULL_BACK,
+};</code></pre>
+<p>A texture is described as a struct:</p>
+<pre><code class="language-cpp">struct TextureDesc
+{
+	uint32_t Width = 0;
+	uint32_t Height = 0;
+	uint32_t MipLevels = 1;
+	// ... 
+};</code></pre>
+<p>I am personally a fan of providing initial default values to everything, which makes them not POD anymore, but a lot more convenient to use. My most favourite feature of the POD is still true, in that none of these contain any custom written constructors, desctructors, move and copy definitions, each are assumed by default.</p>
+<p>Some resources are responsible of holding actual GPU data too. Examples for these are: Texture, GPUBuffer, Sampler, PipelineState, etc. A Texture resource looks something like this:</p>
+<pre><code class="language-cpp">struct Texture
+{
+	TextureDesc	desc;
+	std::shared_ptr&lt;void&gt; internal_state;
+};</code></pre>
+<p>First, the TextureDesc is what describes the texture and is visible to the application/engine. This is stored here for convenience, but it is not necessarily what the actual GPU uses for these resource, that is determined by the implementation, which the internal_state pointer points to, and exists only after the resource was actually “created” (more about this shortly). The internal_state is a void pointer, which means that the implementation is arbitrary, it will be determined when the resource is “created”. The “shared_ptr” was chosen for these reasons:</p>
+<ul><li>Unlike a void* pointer, the shared_ptr knows how to delete the underlying object (because it stores additional metadata).</li><li>The copy, move functionality are a given, so we avoid writing a lot of constructors, destructors, etc. manually.</li><li>The reference counting will delete the object when it is no longer used. This makes it very easy to use it on the engine side, for example: std::vector can be simply used to store mutliple textures, deleting a texture can be achieved by simply removing it from the container, without worrying about how and when it will be destroyed (the requirements of destroying GPU resources can differ greatly between graphics APIs). The object will be also deleted when going out of scope or a new object is constructed in its place.</li></ul>
+<p>The implementation defined structure that the internal_state is pointing to can be anything, without needing to change the common interface. For example, the DX11 implementation of Texture looks like this:</p>
+<pre><code class="language-cpp">struct Texture_DX11
+{
+	ComPtr&lt;ID3D11Resource&gt; resource;
+	ComPtr&lt;ID3D11ShaderResourceView&gt; srv;
+	// ...
+};</code></pre>
+<p>The DX11 implementation is quite simple, internally it uses its own reference counting objects, so it doesn’t even have a destructor (everything is destroyed automatically). A DX11 CreateTexture() function would start like this:</p>
+<pre><code class="language-cpp">bool CreateTexture(const TextureDesc* pDesc, const SubresourceData *pInitialData, Texture *pTexture) const
+{
+	pTexture-&gt;internal_state = std::make_shared&lt;Texture_DX11&gt;();
+	// ...</code></pre>
+<p>Assigning to the internal_state both deletes the previous implementation specific object if it existed before, and creates a new one.</p>
+<p>The Vulkan implementation at the same time can be quite different and more complicated:</p>
+<pre><code class="language-cpp">struct Texture_Vulkan
+{
+	std::shared_ptr&lt;GraphicsDevice_Vulkan::AllocationHandler&gt; allocationhandler;
+	VkImage resource = VK_NULL_HANDLE;
+	VkImageView srv = VK_NULL_HANDLE;
+	// ...
+
+	~Texture_Vulkan()
+	{
+		allocationhandler-&gt;destroylocker.lock();
+		allocationhandler-&gt;destroyer_images.push_back(std::make_pair(std::make_pair(resource, allocation), framecount));
+		allocationhandler-&gt;destroyer_imageviews.push_back(std::make_pair(srv, framecount));
+		allocationhandler-&gt;destroylocker.unlock();
+		//...
+	}
+};</code></pre>
+<p>This is just a little snippet of everything the Vulkan implementation has on the Texture object, but the main reason I wanted to show this is that Vulkan doesn’t have any notion of reference counting, and there are much more stricter rules regarding when a resource can be destroyed. A custom allocator is used and the destructor is adding the vulkan resources to a deferred removal queue, so that the resources won’t be destroyed while they are still in use by the GPU. The point is, these implementation defined objects can be very flexible and as complex as the API requires it.</p>
+<p>Device</p>
+<p>The purpose of resources is holding GPU data, but they don’t provide any functionality by themselves. The graphics device interface is responsible for that. This is the most complex part of the abstraction and which contains all API specific implementations. I chose to use inheritance for this. The base class is called GraphicsDevice, and mostly without implementations – except for some helper functions. This interface can be implemented by an API specific class, so there is GraphicsDevice_DX11, GraphicsDevice_DX12 and GraphicsDevice_Vulkan classes. My personal preference is to use the minimal number of code files, so each API specific class is implemented as one header and cpp pair (but this is not a requirement). This makes API specific files quite large, but all functionality can be found in one place, so there is no question where to find eg. DX12 code and that no other part is dependent on it (I use the Ctrl+M+O hotkey in Visual Studio very frequently to collapse functions). Next, I’ll explain what kind of features the GraphicsDevice provides.</p>
+<p>Creating resources</p>
+<p>The resources must be first created, which means that their GPU-side data gets allocated. The functions like CreateTexture(), CreateBuffer(), CreatePipelineState(), and others will require a descriptor as their input (for example TextureDesc), and they will produce a resource (for example Texture). The descriptor parameters used for creation will be copied to the resource to indicate the most recent creation parameters in the future. If the resource was already created, it will be recreated with the new descriptor parameters (this could mean that the previous contents will be destroyed and simply recreated, but a more optimal path could be taken where it makes sense, for example resizing swapchains). The flow of the creation functions resemble the simplicity of DX11, so the function can initialize the resource with initial data if the initData parameter is not null. Also, after the function returns, the resource can be considered ready to be used. </p>
+<p>An example of creating a texture:</p>
+<pre><code class="language-cpp">TextureDesc desc;
+desc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
+desc.Format = FORMAT_R10G10B10A2_UNORM;
+desc.Width = 3840;
+desc.Height = 2160;
+desc.SampleCount = 8;
+
+Texture texture;
+device-&gt;CreateTexture(&amp;desc, nullptr, &amp;texture);</code></pre>
+<p>The implementation of DX11 maps to this behaviour trivially, but DX12 and Vulkan will ensure by correct synchronization that the resource is ready by the time the GPU is using it. At the time of writing this, the synchronization is performed at the next submit, by letting the GPU wait until previous copy operations are finished.</p>
+<p>As an improvement, it would be a good idea to expose some wait mechanism to let the user defer these synchronizations, because in case of bindless resources the API layer doesn’t have any knowledge of exactly when a resource can be accessed from a shader, and the next submit can be a bit too early and prevent potential asynchronous copies.</p>
+<p>Subresources</p>
+<p>Buffer and Texture resources can have so called subresources, which are different views onto the resource. For example, a texture with multiple MIP levels could have multiple subresources to view each mip level separately, or a single subresource to view the entire mipchain to perform mip sampling. For buffers, different subresources could be created too that view different regions of the buffer. Read-only and Read-write subresources are also differentiated. When creating a Texture or Buffer, and the descriptor has the appropriate flags, the implementation will always create default subresources that view the entire resource, because this is the most common way of accessing these on the GPU. If required, more specific subresources can be created by using the GraphicsDevice::CreateSubresource() functions. The subresources are only meaningful with the main resource allocation, so they are identified by simple integer numbers in this interface. These are the benefits of identifying subresources with numbers:</p>
+<ul><li>The subresource lifetime is bound to the lifetime of the main resource. As long as the main resource is alive, so are the subresources, but subresources will not keep the main resource alive.</li><li>The user doesn’t necessarily have to store subresource identifiers, since they are monotonically increasing numbers. If it’s known that one subresource was created for each mip for example, we implicitly know what number refers to which subresource. This is a very common case with mip generation, texture arrays, 3D textures, cubemaps.</li><li>In the vast majority of the cases, we don’t want to access anything other than the entire resource, so we can simply omit the subresource identifier from all related functions to assume the whole resource. Related functions are for example binding resources to shaders.</li></ul>
+<p>An example of creating a shader resource view for every individual mip level of a texture:</p>
+<pre><code class="language-cpp">for (uint32_t i = 0; i &lt; texture.desc.MipLevels; ++i)
+{
+	int subresource = device-&gt;CreateSubresource(
+		&amp;texture, 
+		SRV, 
+		/*firstSlice=*/ 0, 
+		/*sliceCount=*/ 1, 
+		/*firstMip=*/ i, 
+		/*mipCount=*/ 1
+	);
+}</code></pre>
+<p>Recording render commands</p>
+<p>It is very important to utilize the CPU well when recording a large amount of commands. For this, the CommandList is exposed by the interface which essentially identifies a CPU thread from the point of view of the graphics interface. The CommandList is a monotonically increasing integer number starting from zero. A new CommandList can be started with the GraphicsDevice::BeginCommandList() function, which will give us the next command list and ensure that it is in a correct state ready to record graphics commands. All functions that record commands have a CommandList parameter, which means that the CommandList will be written to, and only one thread at a time should write any CommandList. All these are CPU operations, and no actual GPU work is started by recording commands. Example of using a CommandList:</p>
+<pre><code class="language-cpp">CommandList cmd = device-&gt;BeginCommandList();
+Viewport vp;
+vp.Width = 100;
+vp.Height = 200;
+device-&gt;BindViewports(1, &amp;vp, cmd);</code></pre>
+<p>The CommandList is represented by a number because at the time I saw it as a thread identifier, so several systems are using static arrays that can be indexed by CommandList. Also, these are temporary resources which are not stored anywhere in the engine, so it didn’t make sense to have them be proper graphics resources with an internal_state. Currently I think maybe the decision to expose these as monotonic increasing numbers was maybe a bit too much and makes them a bit rigid to use. In the future I could consider eliminating this, but centrain engine systems might have to be rewritten which use CommandList as thread indices.</p>
+<p>Starting GPU work</p>
+<p>The GraphicsDevice::SubmitCommandLists() function simply closes all CommandLists that were used so far and submits them in order (same order as BeginCommandList() was called) for GPU execution. This is a highly simplified interface compared to what the native graphics APIs provide. It can be seen as a limitation, but it is also a guideline about how to use the renderer, since it is usually a good idea to batch multiple command lists into a single submit operation, to get the most efficient driver path.</p>
+<p>Furthermore, the SubmitCommandLists() is also a point at which swapchains are presented and buffers are synchronized and swapped. This is a place where the CPU can be blocked until the resources that were used by the GPU are freed up and can be modified from the CPU (such as command buffers). There is a possibility to perform the submission from a separate thread to avoid a potential immediate CPU blocking, and start preparing the next frame’s logic that’s not rendering related.</p>
+<p>A more fine grained version of Submit could be written in the future that lets to submit only the specified command lists. This could be beneficial when some command lists are not tied to the current frame but doing unrelated workload. It is not the only way to achieve submission that is more loosely related to the frame. The CreateTexture() and CreateBuffer() are special functions that can be used from any thread to submit a small workload to the copy queue, executed asynchronously (used to initialize resources with data).</p>
+<p>Async compute</p>
+<p>Even with this simplified submission model, async compute configuration is possible. The async compute model was retro-fitted into this model, because previous graphics APIs didn’t have this possiblity. Even so, the interface is straight forward and unobtrusive in my opinion. The BeginCommandList() function has an optional parameter, that can be used to specify a certain GPU_QUEUE, By default, the QUEUE_GRAPHICS will be used, that can execute any type of commands. If the QUEUE_COMPUTE is specified, then the commands will be executed on a separate GPU queue or timeline that is only for compute jobs. These can be scheduled at the same time as graphics queue jobs. The SubmitCommandLists() implementation will handle the API specifics of matching command buffers with queues automatically. Synchronization between queues is performed by the GraphicsDevice::WaitCommandList() command, which is used to specify dependencies between command lists if they are on separate queues. The DX12 and Vulkan APIs can synchronize only queues between separate submits, so the implementation will break up command lists into multiple submits automatically when necessary. Dependencies on the same queue are different, those are handled by GPU Barriers. In case of DX11, which doesn’t have different queues, the implementation can simply ignore the queue parameter and execute everything on the main queue, the result will be the same, only some optimization opportunities will be lost.</p>
+<p>Example of using async compute:</p>
+<pre><code class="language-cpp">CommandList cmd0 = device-&gt;BeginCommandList(QUEUE_GRAPHICS);
+CommandList cmd1 = device-&gt;BeginCommandList(QUEUE_COMPUTE);
+device-&gt;WaitCommandList(cmd1, cmd0); // cmd1 waits for cmd0 to finish
+CommandList cmd2 = device-&gt;BeginCommandList(QUEUE_GRAPHICS); // cmd2 doesn't wait, it runs async with cmd1
+CommandList cmd3 = device-&gt;BeginCommandList(QUEUE_GRAPHICS);
+device-&gt;WaitCommandList(cmd3, cmd1); // cmd3 waits for cmd1 to finish
+
+device-&gt;SubmitCommandLists(); // execute all of the above by the GPU</code></pre>
+<p>GPU Barriers</p>
+<p>Barriers were introduced in modern PC graphics APIs like DX12 and Vulkan and exposed in this interface to a reasonable extent. After all, there is clearly a reason to give developers this level of control to obtain optimum performance. DX11 has no notion of these, so the GraphicsDevice::Barrier() command’s implementation for that API is simply empty. This also means that using this abstraction, implementing something correctly in DX11 will not ensure that DX12 and Vulkan will work correctly, however it is true the other way around. The barriers are a mix between DX12’s [UAV and Transition] barriers and Vulkan’s [pipeline] barriers. Aliasing barriers are not implemented as of now simply because I haven’t tried them yet. The GPUBarrier struct is a simple struct type which holds no API specific data. A GPUBarrier can be:</p>
+<ul><li>Memory barrier: Also called as UAV barrier in DX12, this is used to wait until resource writes or shaders are finished. The GPUBarrier::Memory() function can be used to simply declare such a barrier. If no resources are provided as arguments, then all previous GPU work must finish.</li><li>Buffer barrier: Used to transition a GPUBuffer between different BUFFER_STATEs.</li><li>Image barriers: Used to transition a Texture between different IMAGE_LAYOUTs.</li></ul>
+<p>The GraphicsDevice::Barrier() function can be used to set a batch of barrier commands into the CommandList. Example of setting two barriers:</p>
+<pre><code class="language-cpp">GPUBarrier barriers[] = {
+	GPUBarrier::Memory(),
+	GPUBarrier::Image(&amp;texture, IMAGE_LAYOUT_UNORDERED_ACCESS, texture.desc.layout)
+};
+device-&gt;Barrier(barriers, arraysize(barriers), cmd);</code></pre>
+<p>The memory barrier is used to wait for the compute shader to finish, the image barrier transitions the texture from unordered access layout back to its default layout.</p>
+<p>In both cases [DX12, Vulkan] the implementation doesn’t issue barriers immediately, but there is an opportunity to process and defer them further when possible. Consider the case when there are two separate functions in the engine for doing some graphics effects. These could be unrelated, and don’t know about each other, so they could issue redundant barrier commands on the same CommandList. It is largely beneficial when the engine can provide high level graphics helper functions which operate independently of each other, but on the lower API specific level, there could be further optimizations happening to remove redundant commands. Deferrals such as these happen elsewhere in the implementation as well, like when setting multiple pipeline states without drawing, or binding multiple resources to a slot.</p>
+<p>A useful feature in this abstraction is the ability to define starting layouts for textures and buffers, so the API can transition them to that. It is also useful to make the engine be aware of the expected starting layout of resources at any time. High level graphics code should most of the time transition from the default layout to a temporary layout when necessary and transition back to the default layout. The default layout should be chosen to be the most commonly used layout of the resource for performance and convenience reasons. Without declaring this before resource creation, the default layout is assumed to be a read-only state. Even when two consecutive high level graphics functions transition layouts of one resource rapidly back and forth, there is a chance that some of those transitions will be discovered as redundant by the API layer and removed as described above.</p>
+<p>Render Passes</p>
+<p>DirectX uses SetRendertargets, Vulkan uses render passes. It is possible to implement the SetRendertargets behaviour with Vulkan render passes, and initially this was the chosen way. But going the other way (implementing render passes with Setrendertargets) is a lot easier, so in time the interface was changed to require render passes. These are now GPU resources that must be created, but allow more features like declaring texture layout transitions and choosing whether to preserve the render contents, clear them or just discard them. DX12 now also supports render passes natively, so yet an other reason to use these. In my experience they enforce a little stricter graphics programming model, but one that lets the developer make less mistakes, like forgetting to set/unset render targets. Sometimes the render target contents are also completely temporary, like a depth buffer that is never read from and used in a single render pass – this doesn’t need to be written out to GPU memory, it can stay entirely in tile-cache in some GPU hardware, an now we have a way to declare this intention.</p>
+<p>Example of creating and using a render pass:</p>
+<pre><code class="language-cpp">RenderPassDesc desc;
+desc.attachments.push_back( // add a depth render target
+	RenderPassAttachment::DepthStencil(
+		&amp;depthBuffer_Main,
+		RenderPassAttachment::LOADOP_CLEAR,		// clear the depth buffer
+		RenderPassAttachment::STOREOP_STORE,	// preserve the contents of depth buffer
+		IMAGE_LAYOUT_DEPTHSTENCIL_READONLY,		// initial layout
+		IMAGE_LAYOUT_DEPTHSTENCIL,				// renderpass layout
+		IMAGE_LAYOUT_SHADER_RESOURCE			// final layout
+	)
+);
+desc.attachments.push_back( // add a color render target
+	RenderPassAttachment::RenderTarget(
+		&amp;gbuffer[GBUFFER_VELOCITY], 
+		RenderPassAttachment::LOADOP_DONTCARE	// texture contents are undefined at start
+		// rest of parameters are defaults
+		)
+	);
+if (depthBuffer_Main.desc.SampleCount &gt; 1)
+{
+	// if MSAA rendering, then add a resolve pass for color render target:
+	desc.attachments.push_back(
+		RenderPassAttachment::Resolve(gbuffer_resolved[GBUFFER_VELOCITY])
+	);
+}
+device-&gt;CreateRenderPass(&amp;desc, &amp;renderpass_depthprepass);
+
+device-&gt;RenderPassBegin(&amp;renderpass_depthprepass, cmd);
+// render into texture...
+device-&gt;RenderPassEnd(cmd);</code></pre>
+<p>Pipeline States</p>
+<p>DX11 has separate state objects for different pipeline stages, which goes against the DX12 and Vulkan way. This was easiest to accomplish by exposing the combined PipelineState objects and let the DX11 implementation build the pipeline state from separate parts behind the scenes, while letting the DX12 and Vulkan implementations work in their native way. At least this was the way at first, but declaring render target formats, sample counts or render passes for every PipelineState was becoming inconvenient from the graphics programming point of view. The interface now supports dynamically compiling PiplelineState objects based on which RenderPass they are used in without the programmer needing to declare that before creation. Most of the pipeline state is still declared however, which is also very useful to avoid forgetting setting individual states, and I found this reduced lots of graphics programming mistakes. The implementation will still do a lot of busy work as early as it can for pipelines, which includes decisions based on shader reflection and hashing every available state at creation time. This way runtime state hashing is minimal, only the pipeline_state_hash x render_pass_hash is computed, which is used to determine if there is already a compiled PSO for the current render pass or it needs to be compiled. The PSO compilation happens on the thread which is recording the command list, so in a way it is multithreaded since the engine makes use of multiple threads in its rendering path.</p>
+<p>As an improvement, I am still considering the option to specify the RenderPass beforehand, but optionally, since it could be useful for some more hard coded rendering effects, while getting in the way in other places where the renderer was not designed with knowledge of the current render pass in mind.</p>
+<p>Resource binding</p>
+<p>The most common method of providing resources to shaders is by declaring slot numbers on the shader side, and binding a resource to that slot number on the application side. This is the only way it works in DX11, while DX12 and Vulkan can emulate this behaviour, although in quite different ways. In DX12, a global shader visible descriptor heap (one for samplers, one for resources) is managed as a ring buffer and all descriptors that the shader uses are allocated and filled out by copying from staging descriptor heaps. In DX12 it is highly recommended to avoid binding descriptor heaps more than one time per frame, so large ones are used, that can hold the tier1 limit (1 million CBV_SRV_UAV and 2048 samplers). The Vulkan paradigm is very different, which uses vkAllocateDescriptorSets() from a separate descriptor pool per thread every time a descriptor layout changes or invalidated due to binding changes. The Vulkan implementation will dynamically grow the descriptor pools if they run out of sets by deleting the old ones and allocating larger ones. Even though the implementations are vastly different, and it poses challenges to implement, they can fit well into the interface model resembling DX11.</p>
+<p>In this example, I will bind mip level 5 of a texture that has subresources as created in a previous example, one subresource per mip contiguously so we implicitly know the subresource index:</p>
+<pre><code class="language-cpp">device-&gt;BindResource(PS, &amp;texture, 26, cmd, 5); // binds subresource 5 to pixel shader slot 26</code></pre>
+<p>Or binding the full resource:</p>
+<pre><code class="language-cpp">device-&gt;BindResource(PS, &amp;texture, 26, cmd);</code></pre>
+<p>One personal annoyance with DX11 here is that it will automatically unbind a texture SRV if it’s bound as a UAV, which will cause spamming of debug warnings or unintended behaviour (Vulkan and DX12 doesn’t have this limitation). Currently this must be taken into account when developing graphics code.</p>
+<p>Bindless descriptors</p>
+<p>There was an earlier blog for Wicked Engine which discussed bindless descriptors in more detail than I will here: <a href="../../../../2021/04/06/bindless-descriptors/index.html">https://wickedengine.net/category/devblog/2021/04/06/bindless-descriptors/index.html</a></p>
+<p>In short, they are supported in DX12 and Vulkan, while not supported in DX11. The GraphicsDevice interface provides the way of determining if this feature could be used currently or not, by calling:</p>
+<pre><code class="language-cpp">bool GraphicsDevice::CheckCapability(GRAPHICSDEVICE_CAPABILITY_BINDLESS_DESCRIPTORS);</code></pre>
+<p>Shaders</p>
+<p>From the GraphicsDevice perspective, shaders are provided as already compiled binary data blobs into the GraphicsDevice::CreateShader() function. The DX11 implementation will expect up to shader model 5.0 HLSL shader format, the DX12 expects shader model 6.0 or higher HLSL format, while Vulkan needs the SPIRV format. The shaders can be compiled by any tool of preference, since the native shader formats are accepted. DX12 and Vulkan must make use of shader reflection to determine optimal pipeline layouts, so it is a requirement that reflection data shouldn’t be stripped in those cases. Furthermore, the Wicked Engine supplies a <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiShaderCompiler.cpp">shader compiler interface</a> that can compile shaders written in HLSL to be used in DX11, DX12 and Vulkan. This tool invokes the d3dcompiler or dxcompiler DLLs which are the native shader compilers. As an interesting feature, this tool supports compiling every shader in the engine into a C++ header file, to be embedded into the exe, so the engine won’t need to perform additional file loading operations for every shader. The default way is however to compile every shader to a separate .cso file which contains the shader binary. This also supports shader hot reloading (when a shader source changes, the engine can detect it, recompile and reload it).</p>
+<p>Mipmap generation</p>
+<p>DX11 provided a function called GenerateMips, which is used to generate a full mipchain of a texture in one API call. This is no longer the case with DX12 and Vulkan, where applications are expected to implement this functionality using shaders. This makes sense, as generating mip levels can be dependent on content or art direction. For example Wicked Engine can generate mip levels with various filters or biasing alpha to help combat too much alpha testing in low levels of detail (<a href="http://the-witness.net/news/2010/09/computing-alpha-mipmaps/">http://the-witness.net/news/2010/09/computing-alpha-mipmaps/</a>).</p>
+<p>As such, the GraphicsDevice exposes no GenerateMips functionality, and it is expected to be implemented using shaders. This reduces implementation of the GraphicsDevice which is a good thing because it makes it easier to maintain. In general I am a fan of not exposing anything from the GraphicsDevice that can be implemented on a higher level, for example copying buffers to textures, copying texture region that comes to mind. The engine is already implemented these using shaders, which makes more sense as shader can scale, filter textures, convert between texture formats and apply border paddings.</p>
+<p>Future</p>
+<p>This graphics interface in Wicked Engine is the result of several previous iterations and still continues to evolve. This is not developed only as a toy, but already a huge amount of graphics effects are written with it. I also like to think that it could be a guide or learning resource for other people. If the system of abstraction is not to everyone’s liking, then the raw low level API code is still usable and easily accessible as they are contained in their own separate files (only two files per graphics API: .h and .cpp).</p>
+<ul><li>Graphics resources <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiGraphics.h">[header]</a></li><li>GraphicsDevice_DX11 <a href="https://github.com/turanszkij/WickedEngine/blob/dx11-backup/WickedEngine/wiGraphicsDevice_DX11.h">[header]</a> <a href="https://github.com/turanszkij/WickedEngine/blob/dx11-backup/WickedEngine/wiGraphicsDevice_DX11.cpp">[implementation]</a> (DX11 support was removed, and now this points to the old ver.)</li><li>GraphicsDevice_DX12 <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiGraphicsDevice_DX12.h">[header]</a> <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiGraphicsDevice_DX12.cpp">[implementation]</a></li><li>GraphicsDevice_Vulkan <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiGraphicsDevice_Vulkan.h">[header]</a> <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiGraphicsDevice_Vulkan.cpp">[implementation]</a></li></ul>
+<p>Every day supporting DX11 will be more pointless. Right now I still see benefit to keep it operational, as using this can be an easy way to bring graphics effects to life and test them in DX11, and later adding corrections and optimizations for Vulkan and DX12 by adding barriers for example. This could change in the future and DX11 could be removed. It would certainly free up some API limitations.</p>
+<p><strong>UPDATE: DX11 is removed now, so the Vulkan and DX12 implementations will shine more.</strong></p>
+<p>Thank you for reading! If you have any comments, post them below. To read a more complete documentation about the graphics interface, visit the <a href="https://github.com/turanszkij/WickedEngine/blob/master/Content/Documentation/WickedEngine-Documentation.md#wigraphics">Wicked Engine Documentation’s Graphics chapter</a> (which is updated independently from this blog and could have differences in the future). </p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2021/04/06/bindless-descriptors/index.html">← Bindless Descriptors</a>
+            <a class="newer" href="../../../../2021/06/07/future-geometry-pipeline/index.html">Future geometry pipeline →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

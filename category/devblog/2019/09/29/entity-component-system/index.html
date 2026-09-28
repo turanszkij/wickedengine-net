@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Entity-component system – Wicked Engine</title>
+    <meta name="description" content="Here goes my idea of an entity-component system written in C++. I’ve been using this in my home-made game engine, Wicked Engine for exactly a year now and I am still very happy with it. The focus is on simplicity and…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2019/09/29/entity-component-system/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Entity-component system</h1>
+        <p class="meta"><time datetime="2019-09-29">September 29, 2019</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>Here goes my idea of an entity-component system written in C++. I’ve been using this in my home-made game engine, <a href="https://github.com/turanszkij/WickedEngine">Wicked Engine</a> for exactly a year now and I am still very happy with it. The focus is on simplicity and performance, not adding many features.</p>
+<p>This entity-component system (ECS from now on) is used to manage the game scene. That means storing game objects in memory, updating and rendering them, writing them to disk and loading them from disk to memory. The simple ECS that can handle these consists of:</p>
+<ul><li><strong>Entity</strong>: a unique identifier (a number). Imagine it like an ID in a database.</li><li><strong>Component</strong>: a data blob (a struct). This is the data that is associated with an entity. It is up to the user to create the data type, by creating a struct or a class in C++.</li><li><strong>System</strong>: data transformation (a function). This is any function that operates on a number of components. The user will write simple functions that take components as inputs and produce components as outputs. It is just any C++ function, really.</li><li><strong>ComponentManager</strong>: entity to component mapping container. Each entity can have one component held in it. The user can check if an entity and component exists, and query an entity’s component. This is the thing that we will implement here and give to the user as a tool to work with.</li></ul>
+<p>The ECS will not only be simple, but performance is a big concern. We will want to have a lot of game objects, and manage them as fast as we can. Today, memory access is often the slow part of an application. The best way to avoid fetching memory and waiting for it to arrive, is to make good use of the cache and load from cache as often as we can. By keeping data in linear arrays, we are in a very good position, because most of the time we will iterate through every component and do something with them. The CPU is good at this when data is accessed linearly and memory can be prefetched into cache ahead of time. An other nice feature is that linear arrays will lend themselves very well to multithreading; you can use parallel for loops very simply and efficiently to process a large number of data. The ComponentManager will be responsible to manage components in a linear fashion. This is also called in many places Data Oriented Design (DoD).</p>
+<p>Let’s look at an example first, what kind of code the user of the ECS will need to write:</p>
+<pre><code>// Create a new unique entity:
+Entity entity = CreateEntity();
+
+// A component:
+struct Position
+{
+  float x, y, z;
+};
+
+// ComponentManager to hold components:
+ComponentManager&lt;Position&gt; positions;
+
+// Check whether the entity has a position component:
+positions.Contains(entity); // returns false
+
+// Create a new Position component for the entity:
+Position&amp; position = positions.Create(entity);
+
+// Check whether the entity has a position component:
+positions.Contains(entity); // returns true now
+
+// A system that moves every entities' position up by one:
+void UpdatePositionsSystem(ComponentManager&lt;Position&gt;&amp; positions)
+{
+  for(size_t i = 0; i &lt; position.GetCount(); ++i)
+  {
+    positions[i].y += 1;
+  }
+}</code></pre>
+<p>Apart from the simple example above, the ECS will have some other functionality too, but that comes later, when we need it. Let’s implement what we have so far, one by one. </p>
+<p><strong>Entity</strong></p>
+<p>First, we have the CreateEntity(). This should give us a unique number identifier. The Entity is just a typedef for a 32-bit unsigned int:</p>
+<pre><code>#include &lt;cstdint&gt;
+typedef uint32_t Entity;</code></pre>
+<p>In the simplest implementation for CreateEntity(), you could give a monotonically increasing number:</p>
+<pre><code>Entity CreateEntity()
+{
+  static Entity next = 0;
+  return ++next;
+}</code></pre>
+<p>However, that comes with a lot of issues if you will ever need to serialize the entities, write them to disk and load later. Just imagine starting your program, creating some entities, saving them, then close the program, start again, create some entities (starts from one) then loading the previous entities (those that also started from one). Your entities will no longer be unique in this case. We will address this later, in the Serialization part, for now you can use this, then later replace this function if you are interested in serialization.</p>
+<p>By the way, we start from one, because we reserve zero as an invalid entity handle. This is useful, for example giving default value to entities that have not yet been created:</p>
+<pre><code>static const Entity INVALID_ENTITY = 0;</code></pre>
+<p>This is it for the Entity for now. The crux of the implementation will be after this, the ComponentManager.</p>
+<p><strong>ComponentManager</strong></p>
+<p>The ComponentManager is a container that we will implement. It will be storing components and entities in linear arrays, for the previously mentioned performance reasons. By storing both components and entities, we have the ability to query a component’s entity or an entity’s component for a specific index position inside the ComponentManager. Very useful if we just iterate through all components and want to look up into an other type of ComponentManager for a component’s entity. Speaking of lookups, sometimes we want to just look up a specific entity’s component, without iteration through the whole array, for that a hash map will be perfect. This ComponentManager can be templated based on component type, so it can look sort of like a C++ standard container:</p>
+<pre><code>#include &lt;vector&gt;
+#include &lt;unordered_map&gt;
+
+template&lt;typename Component&gt;
+class ComponentManager
+{
+private:
+  std::vector&lt;Component&gt; components;
+  std::vector&lt;Entity&gt; entities;
+  std::unordered_map&lt;Entity, size_t&gt; lookup;
+};</code></pre>
+<p>We then start implementing the functionality for our previous example. With a Contains() method, we can check if  an entity has this kind of component or not:</p>
+<pre><code>bool Contains(Entity entity) const
+{
+  return lookup.find(entity) != lookup.end();
+}</code></pre>
+<p>Of course, first, we should be able to create components for entities with a Create() function:</p>
+<pre><code>Component&amp; Create(Entity entity)
+{
+  // INVALID_ENTITY is not allowed!
+  assert(entity != INVALID_ENTITY);
+
+  // Only one of this component type per entity is allowed!
+  assert(lookup.find(entity) == lookup.end());
+
+  // Entity count must always be the same as the number of components!
+  assert(entities.size() == components.size());
+  assert(lookup.size() == components.size());
+
+  // Update the entity lookup table:
+  lookup[entity] = components.size();
+
+  // New components are always pushed to the end:
+  components.push_back(Component());
+
+  // Also push corresponding entity:
+  entities.push_back(entity);
+
+  return components.back();
+}</code></pre>
+<p>I like to put in a lot of asserts wherever I can, so a debug version of the program will catch any issues. For simplicity’s sake, I like the limitation that an entity can have only one components of the same kind. If the user would ever want more components, more ComponentManager instances can be used, but I never wanted to have more than one component of the same kind for an entity.</p>
+<p>To iterate through every component (or entity, because there is the same amount of components and entities), we can query the amount of components/entities:</p>
+<pre><code>size_t GetCount() const { return components.size(); }</code></pre>
+<p>Then to iterate in a linear fashion, we can get a component reference from the linear array by a size_t indexer and the [] operator:</p>
+<pre><code>Component&amp; operator[](size_t index) { return components[index]; }</code></pre>
+<p>All of these methods are a part of the templated ComponentManager class, so they reside in the header file. In fact, all our implementation will be in the same header file as part of the ComponentManager class. So far, this is enough to use the simple example that I written above. However, this is not enough functionality. Next, I will give some other useful functions that the ComponentManager should have and use cases for them.</p>
+<p>For example, I often iterate through components and use the [] operator to index a component. But what if I need the Entity for the same component? It is not required that the component data struct contain an Entity reference. Instead, the ComponentManager can give the corresponding Entity back to the user:</p>
+<pre><code>Entity GetEntity(size_t index) const { return entities[index]; }</code></pre>
+<p>The use case is if we have different components for one entity, and one component wants to look at an other component’s data:</p>
+<pre><code>ComponentManager&lt;Position&gt; positions;
+// ... continued from previous example, entity has a position now...
+
+struct Mass
+{
+ float value;
+};
+ComponentManager&lt;Mass&gt; masses;
+masses.Create(entity);
+
+for(size_t i = 0; i &lt; positions.GetCount(); ++i)
+{
+  Position&amp; position = positions[i];
+  Entity entity = positions.GetEntity(i);
+  Mass* mass = masses.GetComponent(entity);
+  if(mass != nullptr)
+  {
+    position.y += 1.0f / mass-&gt;value;
+  }
+}</code></pre>
+<p>In the above example, in order to update the position, we need to get access to the mass, but that is stored in an other component. We check if the entity has a mass, and if it has, we update the position according to the mass. The GetComponent() function also needs to be implemented now:</p>
+<pre><code>Component* GetComponent(Entity entity)
+{
+  auto it = lookup.find(entity);
+  if (it != lookup.end())
+  {
+    return &amp;components[it-&gt;second];
+  }
+  return nullptr;
+}</code></pre>
+<p>As you can see, this will return the pointer to a component if it exists, nullptr otherwise. This performs a hash map lookup, that is slower than linear access indexing, but we won’t use it as frequently. Or at least, we shouldn’t! We should lay out our data that map lookups like this will be minimized. It is often better to duplicate data in an ECS and keep the cache warm.</p>
+<p>What about deleting game objects? This can be a frequently used functionality of the ECS, so we must implement it. We can remove the last element of a linear array trivially, we just decrease the array size by one (std::vector’s pop() function) and destroy the last object. Removing from the middle of the array is a bit more tricky. We replace the element to be removed with the last element in the array, and decrease the array’s size. This is done by the Remove() function (duh):</p>
+<pre><code>void Remove(Entity entity)
+{
+  auto it = lookup.find(entity);
+  if (it != lookup.end())
+  {
+    // Directly index into components and entities array:
+    const size_t index = it-&gt;second;
+    const Entity entity = entities[index];
+
+    if (index &lt; components.size() - 1)
+    {
+      // Swap out the dead element with the last one:
+      components[index] = std::move(components.back()); // try to use move
+      entities[index] = entities.back();
+
+      // Update the lookup table:
+      lookup[entities[index]] = index;
+    }
+
+    // Shrink the container:
+    components.pop_back();
+    entities.pop_back();
+    lookup.erase(entity);
+  }
+}</code></pre>
+<p>As you can see, we also have to keep the lookup table in sync with the entity and component arrays. I also try to use C++ move semantics and avoid copying component data if possible. It will be possible if you use only default constructors and destructors, or write move constructors for your components yourself. Otherwise, copy will be used.</p>
+<p>If you remove an element like this, it can be problematic however, if you rely on component ordering. There was at least one case where I relied on the order. However, so far we have a pretty well usable ECS already. The following sections of the blog will be about two bigger topics:</p>
+<ul><li>Scene graph hierarchy: the problem is that we rely on component ordering in the ECS hierarchy traversal</li><li>Serialization: the problem is that Entity uniqueness must persist after serialization/deserialization.</li></ul>
+<p>If you are interested in the above topics, stick around. 🙂</p>
+<p><strong>Scene Graph</strong></p>
+<p>For me, this was actually the most interesting part of implementing the ECS because this had the most question marks in my head about. In a usual pointer based scene graph tree implementation, we can just use recursion and traverse all tree nodes starting from the root node trivially. With the ECS implementation, this is done a bit differently. We have components here, stored in linear arrays, and we can’t use pointers to index components, because they can move around in the ComponentManager when they are being added and removed. So how to do it?</p>
+<p>The basic scene graph is a tree of nodes, where each node has a spatial position, and all its children’s positions will be relative to their parent. This means, that we can have:</p>
+<ul><li>TransformComponent: position, scale, rotation, world matrix</li><li>HierarchyComponent: entity’s parent, parent’s inverse world matrix at the time of attaching</li></ul>
+<p>With these two components, and iterating components linearly from first to last, we are able to represent hierarchy in a scene. There is one other missing piece: we will rely on the order of components in the linear arrays. Because children can refer to their single parent, but parents have no knowledge of their (possibly many) children, parents must be placed before their children in the component arrays, so that when a child computes its transform world matrix, the parent is already up to date because it was computed earlier.</p>
+<p>For example, let’s say that we have an Attach() function:</p>
+<pre><code>void Attach(Entity entity, Entity parent);</code></pre>
+<p>This function will operate on the HierarchyComponent array and add a new  component at the end, that will be the child:</p>
+<pre><code>struct HierarchyComponent
+{
+  Entity parentID = INVALID_ENTITY;
+  Matrix world_parent_inverse_bind;
+};
+ComponentManager&lt;HierarchyComponent&gt; hierarchy;
+
+void Attach(Entity entity, Entity parent)
+{
+  hierarchy.Create(entity).parentID = parent;
+  // ... to be continued
+}</code></pre>
+<p>However, the child we are adding might have been already a parent of other children. In that case, we want to search for a component whose parent is the current entity which we are attaching and move it before it.</p>
+<pre><code>// ...continued
+
+for (size_t i = 0; i &lt; hierarchy.GetCount(); ++i)
+{
+  const HierarchyComponent&amp; child = hierarchy[i];
+	
+  if (child.parentID == entity)
+  {
+    hierarchy.MoveItem(hierarchy.GetCount() - 1, i);
+    break;
+  }
+}</code></pre>
+<p>But that’s not sufficient as someone pointed out in the comments, because if a whole sub-tree is reattached, not only the parent can get in the wrong place, but all children of that, so we have to carefully check every entity and move them if they are actually a parent of some component that’s before them. So replace the previous block with this more complicated one instead:</p>
+<pre><code>// ...continued
+
+if (hierarchy.GetCount() &gt; 1)
+{
+  for (size_t i = hierarchy.GetCount() - 1; i &gt; 0; --i)
+  {
+    Entity parent_candidate_entity = hierarchy.GetEntity(i);
+    const HierarchyComponent&amp; parent_candidate = hierarchy[i];
+    for (size_t j = 0; j &lt; i; ++j)
+    {
+      const HierarchyComponent&amp; child_candidate = hierarchy[j];
+
+      if (child_candidate.parentID == parent_candidate_entity)
+      {
+        hierarchy.MoveItem(i, j);
+        ++i; // next outer iteration will check the same index again as parent candidate, however things were moved upwards, so it will be a different entity!
+        break;
+      }
+    }
+  }
+}</code></pre>
+<p>Explanation: We start from the end of the hierarchy (from the component we just added), and check if any previous components are its children or not. If we find a child before it, we move it before the child (but keep the ordering of all components after the child intact). We move towards the beginning of the hierarchy chain and for every component, check if there is a child before them and move if necessary.</p>
+<p>The MoveItem() is a new method for the ComponentManager class. It will move an element to a specified index inside the array and moves all elements that are in the way by one position:</p>
+<pre><code>void MoveItem(size_t index_from, size_t index_to)
+{
+  assert(index_from &lt; GetCount());
+  assert(index_to &lt; GetCount());
+  if (index_from == index_to)
+  {
+    return;
+  }
+
+  // Save the moved component and entity:
+  Component component = std::move(components[index_from]);
+  Entity entity = entities[index_from];
+
+  // Every other entity-component that's in the way gets moved by one and lut is kept updated:
+  const int direction = index_from &lt; index_to ? 1 : -1;
+  for (size_t i = index_from; i != index_to; i += direction)
+  {
+    const size_t next = i + direction;
+    components[i] = std::move(components[next]);
+    entities[i] = entities[next];
+    lookup[entities[i]] = i;
+  }
+
+  // Saved entity-component moved to the required position:
+  components[index_to] = std::move(component);
+  entities[index_to] = entity;
+  lookup[entity] = index_to;
+}</code></pre>
+<p>That could have been done in a different way, by allocating a temporary memory and moving all the prior elements in one go instead of one by one. The current solution instead avoids extra memory allocations.</p>
+<p>After calling MoveItem() in the Attach() function, we are not sure anymore that references remained intact, so we query the currently added child: </p>
+<pre><code>HierarchyComponent&amp; parentcomponent = *hierarchy.GetComponent(entity);</code></pre>
+<p>Then we continue to query the TransformComponent of the parent (create it if it doesn’t exist):</p>
+<pre><code>TransformComponent* transform_parent = transforms.GetComponent(parent);
+if (transform_parent == nullptr)
+{
+  transform_parent = &amp;transforms.Create(parent);
+}
+// Save the parent's inverse worldmatrix:
+parentcomponent.world_parent_inverse_bind = MatrixInverse(transform_parent-&gt;worldmatrix);</code></pre>
+<p>This is it for the Attach() function. But sometimes, we also detach children from parents. The Detach function() could be like this:</p>
+<pre><code>void Scene::Component_Detach(Entity entity)
+{
+  const HierarchyComponent* parent = hierarchy.GetComponent(entity);
+
+  if (parent != nullptr)
+  {
+    TransformComponent* transform = transforms.GetComponent(entity);
+    if (transform != nullptr)
+    {
+      transform-&gt;ApplyTransform();
+    }
+    hierarchy.Remove_KeepSorted(entity);
+  }
+}</code></pre>
+<p>So we look into the hierarchy array, if the entity is in it, we detach it by applying transformation (the current position, rotation, scale is converted to world matrix) and then removing the component from the hierarchy. Again, we need to remove it while keping the ordering sorted. For that, a Remove_KeepSorted() function was implemented:</p>
+<pre><code>void Remove_KeepSorted(Entity entity)
+{
+  auto it = lookup.find(entity);
+  if (it != lookup.end())
+  {
+    // Directly index into components and entities array:
+    const size_t index = it-&gt;second;
+    const Entity entity = entities[index];
+
+    if (index &lt; components.size() - 1)
+    {
+      // Move every component left by one that is after this element:
+      for (size_t i = index + 1; i &lt; components.size(); ++i)
+      {
+        components[i - 1] = std::move(components[i]);
+      }
+      // Move every entity left by one that is after this element:
+      for (size_t i = index + 1; i &lt; entities.size(); ++i)
+      {
+        entities[i - 1] = entities[i];
+        lookup[entities[i - 1]] = i - 1;
+      }
+    }
+
+    // Shrink the container:
+    components.pop_back();
+    entities.pop_back();
+    lookup.erase(entity);
+  }
+}</code></pre>
+<p>So we remove an element from the middle, but instead of swapping in the last one, we move every element after this one to the left, so ordering is preserved.</p>
+<p>So we can attach, detach components now. All of it makes sense when we iterate the hierarchy and update transforms in the right order. This is the Hierarchy Update System:</p>
+<pre><code>void RunHierarchyUpdateSystem(
+  const ComponentManager&lt;HierarchyComponent&gt;&amp; hierarchy,
+  ComponentManager&lt;TransformComponent&gt;&amp; transforms,
+  )
+{
+  for (size_t i = 0; i &lt; hierarchy.GetCount(); ++i)
+  {
+    const HierarchyComponent&amp; parentcomponent = hierarchy[i];
+    Entity entity = hierarchy.GetEntity(i);
+
+    TransformComponent* transform_child = transforms.GetComponent(entity);
+    TransformComponent* transform_parent = transforms.GetComponent(parentcomponent.parentID);
+    if (transform_child != nullptr &amp;&amp; transform_parent != nullptr)
+    {
+      transform_child-&gt;UpdateTransform_Parented(*transform_parent, parentcomponent.world_parent_inverse_bind);
+    }
+  }
+}</code></pre>
+<p>We iterate the hierarchy components, but also look up from transforms, and use the parent’s inverse bind matrix when updating the transform matrix.</p>
+<p>This concludes the basic implementation of the ECS scene graph traversal. The Attach and Detach functions are more heavy than with a pointer based approach, but the traversal itself which is the commonly executed path, should be faster, if we have a flat hierarchy (eg. one parent has many children). If the hierarchy is more deep however, the pointer based tree traversal can beat the ECS implementation. This needs more investigation from me, but I was happy with keeping only the ECS hierarchy path for everything, instead of having also a pointer based scene graph, for example skeleton bones, which usually have deep hierarchy. </p>
+<p>A closing side note: Even though hierarchy is contained in a linear array now, multithreading is still not possible with a parallel for loop in this specific case. Because the order of the components matter, the execution order also matters. You can still find ways to parallelize, for example by doing the whole hierarchy update on a separate thread, while also doing the material update system or other kind of unrelated systems in parallel with it.</p>
+<p><strong>Serialization</strong></p>
+<p>One of my main objectives was to efficiently serialize and deserialize the whole entity component system in the engine. The ComponentManager lends itself nicely for this with its linear arrays. We can just easily dump the array contents (entity array and component array) into a file and write them to disk. Loading them is also very convenient. There is only one issue. Entity serialization needs some extra care to keep them unique. We can no longer use simple monotonically increasing IDs for Entities <strong>(Update: Actually, we can, updated the post below with my new approach*)</strong>. Instead, let’s generate random numbers:</p>
+<pre><code>#include &lt;random&gt;
+
+std::random_device rand_dev;
+std::mt19937 generator(rand_dev());
+
+Entity CreateEntity()
+{
+  std::uniform_int_distribution&lt;int&gt;  distr(1, INT_MAX);
+  return distr(generator);
+}</code></pre>
+<p>The above code uses C++ random generator to generate uniformly distributed random numbers between 1 and INT_MAX. That range is enough so that we are unlikely to get collisions very soon (<strong>Note: it recommended to use 64-bit keys instead, that I discovered since writing this blog</strong>). But! there is an other problem as well: What if we want to load the same entity collection twice? Imagine that we serialized a model and saved to the disk. We want to load the model twice into the scene. The Entity numbers were randomized, but if we load them twice, they will no longer be unique!</p>
+<p>I use the following solution: have a specific serialization post-process for Entities. We combine them with a random seed that is unique per deserialization pass. So instead of simply deserializing Entity like this:</p>
+<pre><code>Archive archive;
+// ...
+archive &gt;&gt; entity;</code></pre>
+<p>We use a slightly more complicated method:</p>
+<pre><code>uint32_t seed = get_random_number_once_per_serialization();
+// ...
+archive &gt;&gt; entity;
+if (entity != INVALID_ENTITY &amp;&amp; seed &gt; 0)
+{
+  entity = ((entity &lt;&lt; 1) ^ seed) &gt;&gt; 1;
+}</code></pre>
+<p>Of course, I just combined that into a SerializeEntity(Entity entity, uint32_t seed); function. So I just make sure to always serialize Entities with that function. </p>
+<p>Sometimes, you don’t want to process the entity IDs when serializing, for example when you don’t save them to disk. In that case, you can leave the seed as zero and entity IDs will remain unmodified.</p>
+<p>I also gave the ComponentManager the ability to serialize itself, by having a Serialize() function. That will also accept the Entity seed. However, we must look out that in some cases, components can hold Enity members to reference something. This is the case with HierarchyComponent as discussed before, but other cases, like a Mesh Instance holding the Mesh Entity ID are possible too. If the ComponentManager’s Serialize function is used, then we must ensure that the Component array gets serialized and the components’ Entity reference members are seeded correctly. Thus, a Serialize(Archive archive, uint32_t seed) function will be necessary for Components in this case.</p>
+<p><strong>*Update: Serialization with monotonic entities</strong></p>
+<p>Instead of randomizing entities which could result in hash collisions, we can keep using the monotonically increasing IDs, and a lookup table in the serialization phase to avoid collisions with already existing entities while serializing. My solution is to incorporate an EntitySerializer struct with a hash map for all serialization methods:</p>
+<pre><code>struct EntitySerializer
+{
+     std::unordered_map remap;
+     bool allow_remap = true;
+};</code></pre>
+<p>The unordered map is a hash map where we will look up whether an entity that’s being deserialized was already deserialized before in the current session. If it wasn’t, we generate a new monotonic ID for it, otherwise, we will look it up from the map. I create a new entity serializer object for each separate deserialization, which is important because we can deserialize the same memory (containing the same IDs) twice, but in those cases we also want to avoid ID collisions.</p>
+<p>The allow_remap is used to detect when we in fact don’t want to deserialize to unique IDs. For example, We want to duplicate an entity with all of its components, which is a mesh instance, so we wil serialize a new mesh instance. But the component stores an entity ID which points to a mesh entity, which we want to keep intact.</p>
+<pre><code>inline void SerializeEntity(wiArchive&amp; archive, Entity&amp; entity, EntitySerializer&amp; seri)
+{
+   if (archive.IsReadMode())
+   {
+     Entity mem;
+     archive &gt;&gt; mem;
+
+     if (seri.allow_remap)
+     {
+       auto it = seri.remap.find(mem);
+       if (it == seri.remap.end())
+       {
+         entity = CreateEntity();
+         seri.remap[mem] = entity;
+       }
+       else
+       {
+         entity = it-&gt;second;
+       }
+     }
+     else
+     {
+       entity = mem;
+     }
+   }
+   else
+   {
+     archive &lt;&lt; entity;
+   }
+}</code></pre>
+<p>Well, it was a very long write up, I hope someone finds it useful. At least I kind of documented this thing for myself, so that’s already worth it.</p>
+<p>My implementation of the ECS can be found <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiECS.h">here</a>. It contains some additional functionality that was out of scope for this blog. The main use case is Scene management, most of the systems and components are implemented in <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiScene.cpp">wiScene</a>.</p>
+<p>Let me know in the comments if you find mistakes or have questions, or just simply want to discuss something!</p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2019/09/22/improved-normal-reconstruction-from-depth/index.html">← Improved normal reconstruction from depth</a>
+            <a class="newer" href="../../../../2020/01/05/tile-based-optimization-for-post-processing/index.html">Tile-based optimization for post processing →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

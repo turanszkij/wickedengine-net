@@ -134,4 +134,205 @@ article {
     nav a {
         margin: 0 5px;
     }
+    .post h1 {
+        font-size: 1.6rem;
+    }
+    .post-list a {
+        font-size: 1.15rem;
+    }
+    .post-nav {
+        flex-direction: column;
+    }
+    .post-nav a {
+        max-width: none;
+        text-align: left;
+    }
+}
+
+.post,
+.post-index {
+    padding: 0 20px 48px;
+}
+
+.post h1,
+.post-index h1 {
+    font-size: 2rem;
+    line-height: 1.2;
+    margin-bottom: 0.35rem;
+}
+
+.post .meta {
+    margin-bottom: 1.5rem;
+}
+
+.post .meta a,
+.post a,
+.post-index a {
+    margin-left: 0;
+    font-size: inherit;
+}
+
+.post .body {
+    line-height: 1.65;
+    font-size: 1.05rem;
+    overflow-wrap: break-word;
+}
+
+.post .body p,
+.post-index > p {
+    margin: 0.8em 0;
+}
+
+.post .body h2,
+.post .body h3,
+.post .body h4 {
+    line-height: 1.25;
+    margin: 1.7em 0 0.45em;
+}
+
+.post .body h3 {
+    font-size: 1.25rem;
+}
+
+.post .body ul,
+.post .body ol {
+    margin: 0.6em 0 0.6em 1.3em;
+}
+
+.post .body li {
+    margin: 0.28em 0;
+}
+
+.post .body a {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.post .body img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 1rem auto;
+    border-radius: 8px;
+}
+
+.post .body figure {
+    margin: 1.3rem 0;
+    max-width: 100%;
+}
+
+.post .body figcaption {
+    font-size: 0.92rem;
+    line-height: 1.45;
+    margin-top: 0.45rem;
+}
+
+.post .body .gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin: 1.3rem 0;
+}
+
+.post .body .gallery figure,
+.post .body .gallery img {
+    margin: 0;
+}
+
+.post .body .gallery img {
+    width: 100%;
+}
+
+.post .body .video iframe,
+.post .body .video video {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    height: auto;
+    background: #000;
+    border: 0;
+    border-radius: 8px;
+}
+
+.post .body pre {
+    background: var(--color-dark);
+    border: 2px solid var(--color-shadow);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin: 1.1rem 0;
+    overflow-x: auto;
+    line-height: 1.45;
+    white-space: pre;
+}
+
+.post .body code {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 0.88em;
+}
+
+.post .body pre code {
+    font-size: 0.84rem;
+    background: none;
+    border: 0;
+    padding: 0;
+}
+
+.post .body :not(pre) > code {
+    background: var(--color-dark);
+    border: 1px solid var(--color-shadow);
+    border-radius: 4px;
+    padding: 0.05em 0.35em;
+}
+
+.post .body blockquote {
+    margin: 1em 0;
+    padding-left: 1em;
+    border-left: 3px solid var(--color-shadow);
+}
+
+.post .body mark {
+    color: var(--color-dark);
+    padding: 0 0.15em;
+}
+
+.post-nav {
+    display: flex;
+    justify-content: space-between;
+    gap: 1.2rem;
+    margin-top: 2.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-shadow);
+}
+
+.post-nav a {
+    max-width: 46%;
+    text-decoration: none;
+}
+
+.post-nav .newer {
+    margin-left: auto;
+    text-align: right;
+}
+
+.post-list {
+    list-style: none;
+    margin-top: 1.2rem;
+}
+
+.post-list li {
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--color-shadow);
+}
+
+.post-list time {
+    display: block;
+    font-size: 0.9rem;
+}
+
+.post-list a {
+    font-size: 1.3rem;
+}
+
+.post-list p {
+    margin: 0.35rem 0 0;
 }

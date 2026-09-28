@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Should we get rid of Vertex Buffers? – Wicked Engine</title>
+    <meta name="description" content="TLDR: If your only platform to support is a recent AMD GPU, or console, then yes. 🙂 I am working on a “game engine” nowadays but mainly focusing on the rendering aspect. I wanted to get rid of some APIs lately in my…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2017/06/05/should-we-get-rid-of-vertex-buffers/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Should we get rid of Vertex Buffers?</h1>
+        <p class="meta"><time datetime="2017-06-05">June 5, 2017</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>TLDR: If your only platform to support is a recent AMD GPU, or console, then yes. 🙂</p>
+<p>I am working on a “game engine” nowadays but mainly focusing on the rendering aspect. I wanted to get rid of some APIs lately in my graphics wrapper to be more easier to use, because I just hate the excessive amount of state setup (I am using DirectX 11 like rendering commands). Looking at the current code, my observation is that there are many of those ugly vertex buffer and input layout management pieces that just feel so unnecessary when there are so flexible memory management operations available to the shader developers nowadays.</p>
+<p>My idea is that why should we declare input layouts, bind them before rendering, then also binding appropriate vertex buffers to appropriate shaders before rendering? At least in my pipeline, if I already know the shader I am using, I already know the required “input layout” of the “vertices” it should process, so why not just read them in the shader as I see fit right there?</p>
+<p>For example we already have Access to ByteAddressBuffer from which is trivial to read vertex buffer data (unless it is a typed data for example RGBA8_UNORM format but it can still be converted easily). We can save ourselves a call to IASetInputLayout and instead of IASetVertexBuffers with a stride and offset, we can just bind it as VSSetShaderResources and do the reading in the beginning of the vertex shader. I find it easier, more to the point and also more efficient because we avoid loading from typed buffers and one less call to the API.</p>
+<p>So I began rewriting my scene rendering code to make use of custom fetching the vertex buffers. First I used typed buffer loads, but that left me with subpar performance with Nvidia GPUs (GTX 960 and GTX 1070). I posted on Gamedev.net and others suggested me that I should be using raw buffers (byteaddressbuffer) instead. So I did. The results were like exactly the same on my GTX 1070 GPU and on an other GTX 960. The AMD RX 470 however was performing nearly exactly the same as it was before. The GCN achitecture abandoned the fixed function pipeline when fetching vertex buffers and it uses regular memory operations as it seems.</p>
+<p>Not long ago I’ve had some look at the current generation of console development SDKs and there it is even recommended practice to read the vertex data yourself, they even provide API calls to “emulate” regular vertex buffer usage (at least on the PS4) though if you inspect the final compiled shaders, you will even find vertex fetching code in them.</p>
+<p>I assembled a little benchmark in my engine on the sponza scene on an AMD and NVIDIA GPU, take a look (sorry for formatting issues, I can barely use wordpress it seems):</p>
+<blockquote>
+Program: Wicked Engine Editor
+API: DX11
+Test scene: Sponza
+<p>– 3 shadow cascades (2D) – 3 scene render passes</p>
+<p>– 1 spotlight shadow (2D) – 1 scene render pass</p>
+<p>– 4 pointlight shadows (Cubemap) – 4 scene render passes</p>
+<p>– Z prepass – 1 scene render pass</p>
+<p>– Opaque pass – 1 scene render pass</p>
+
+Timing method: DX11 timestamp queries
+Methods:
+<p>– InputLayout : The default hardware vertex buffer usage with CPU side input layout declarations. The instance buffers are bound as vertex buffers with each render call.</p>
+<p>– CustomFetch (typed buffer): Vertex buffers are bound as shader resource views with DXGI_FORMAT_R32G32B32A32_FLOAT format. Instance buffers are bound as Structured Buffers holding a 4×4 matrix each.</p>
+<p>– CustomFetch (RAW buffer 1): Vertex buffers are bound as shader resource views with a MiscFlag of D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS. In the shader the buffers are addressed in byte offsets from the beginning of the buffer. Instance buffers are bound as Structured Buffers holding a 4×4 matrix each.</p>
+<p>– CustomFetch (RAW buffer 2): Even instancing information is retrieved from raw buffers instead of structured buffers.ShadowPass and ZPrepass: These are using 3 buffers max:</p>
+<p>– position (float4)</p>
+<p>– UV (float4) // only for alpha tested</p>
+<p>– instance buffer</p>
+<p>OpaquePass: This is using 6 buffers:</p>
+<p>– position (float4)</p>
+<p>– normal (float4)</p>
+<p>– UV (float4)</p>
+<p>– previous frame position VB (float4)</p>
+<p>– instance buffer (float4x4)</p>
+<p>– previous frame instance buffer (float4x3)</p>
+
+
+<p>RESULTS:</p>
+
+GPU     Method        ShadowPass    ZPrepass   OpaquePass   All GPU
+NVidia GTX 960  InputLayout       4.52 ms     0.37 ms    6.12 ms    15.68 ms
+<p>NVidia GTX 960  CustomFetch (typed buffer)   18.89 ms    1.31 ms    8.68 ms    33.58 ms</p>
+<p>NVidia GTX 960  CustomFetch (RAW buffer 1)   18.29 ms    1.35 ms    8.62 ms    33.03 ms</p>
+<p>NVidia GTX 960  CustomFetch (RAW buffer 2)   18.42 ms    1.32 ms    8.61 ms    33.18 ms</p>
+
+AMD RX 470   InputLayout       7.43 ms     0.29 ms    3.06 ms    14.01 ms
+<p>AMD RX 470   CustomFetch (typed buffer)   7.41 ms     0.31 ms    3.12 ms    14.08 ms</p>
+<p>AMD RX 470   CustomFetch (RAW buffer 1)   7.50 ms     0.29 ms    3.07 ms    14.09 ms</p>
+<p>AMD RX 470   CustomFetch (RAW buffer 2)   7.56 ms     0.28 ms    3.09 ms    14.15 ms</p>
+
+</blockquote>
+Sadly, it seems that we can not get rid of the vertexbuffer/inputlayout APIs of DX11 when developing for PC platform because NVIDIA GPUs are much less performant with this method of custom vertex fetching. But what about mobile platforms? I have a Windows Phone build of Wicked Engine, and I want to test it on the Snapdragon 808 GPU but it seems like a bit of extra work to set it up on mobile so I will do it later probably. I somewhat already quite disappointed though because my engine is a designed for PC-like high performance usage so the mobile set up will have to wait a bit.
+So the final note: If current gen consoles are your only platform, you can fetch your vertex data by hand with no problem and probably even more optimally by bypassing the typed conversions/or some other magic. If you are developing on PC, you have to keep the vertex buffer APIs intact yet which can be a pain as it will require a more ambigous shader syntax. And why in the hell should we declare strings (eg. TEXCOORD4) in the input layout is completely beyond me and annoying as hell.
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2016/11/13/how-to-resolve-an-msaa-depthbuffer/index.html">← How to Resolve an MSAA DepthBuffer</a>
+            <a class="newer" href="../../../../2017/08/30/voxel-based-global-illumination/index.html">Voxel-based Global Illumination →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Easy Transparent Shadow Maps – Wicked Engine</title>
+    <meta name="description" content="Supporting transparencies with traditional shadow mapping is straight forward and allows for nice effects but as with anything related to rendering transparents with rasterization, there are corner cases. Little…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2018/01/18/easy-transparent-shadow-maps/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Easy Transparent Shadow Maps</h1>
+        <p class="meta"><time datetime="2018-01-18">January 18, 2018</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p><img alt="transparent_shadows" decoding="async" height="1313" src="../../../../wp-content/uploads/2018/01/transparent_shadows.png" width="2214"/></p>
+<p>Supporting transparencies with traditional shadow mapping is straight forward and allows for nice effects but as with anything related to rendering transparents with rasterization, there are corner cases.</p>
+<p>Little sneak peak of what you can achieve with this:</p>
+<figure class="video"><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen="allowfullscreen" loading="lazy" src="https://www.youtube.com/embed/3BPG8p1v-_4" title="YouTube video"></iframe></figure>
+<p>The implementation is really simple once you have implemented shadow mapping for opaque objects. After the opaque shadow pass, we must render the transparents into a color buffer, but reject samples which would be occluded by opaques, so using a depth read-only depth stencil state. The transparents should be blended multiplicatively. Sorting does not matter with a multiply blend state. In bullet points:</p>
+<ol>
+<li>Render opaque objects into depth stencil texture from light’s point of view</li>
+<li>Bind render target for shadow color filter: R11G11B10 works good</li>
+<li>Clear render target to 1,1,1,0 (RGBA) color</li>
+<li>Apply depth stencil state with depth read, but no write</li>
+<li>Apply multiplicative blend state eg:
+<ul>
+<li>SrcBlend = BLEND_ZERO</li>
+<li>DestBlend = BLEND_SRC_COLOR</li>
+<li>BlendOp = BLEND_OP_ADD</li>
+</ul>
+</li>
+<li>Render transparents in arbitrary order</li>
+</ol>
+<p>When reading shadow maps in shading passes, we only need to multiply the lighting value with the transparent shadow map color filter if the pixel is inside the light. There is a slight problem with this approach, that you will notice immediately. Transparent objects now receive their own colored self shadow too. The simplest fix is to just disable the colored part of the shadow calculation for transparent objects. We can already produce nice effects with this, this is not a huge price to pay.</p>
+<p>See it in action, transparents are rendered without colored self-shadows:</p>
+<p><img alt="doesnotreceive" decoding="async" height="480" loading="lazy" src="../../../../wp-content/uploads/2018/01/doesnotreceive.gif" width="640"/></p>
+<p>But they receive shadows from opaque objects just fine:</p>
+<p><img alt="opaquereceived" decoding="async" height="480" loading="lazy" src="../../../../wp-content/uploads/2018/01/opaquereceived.gif" width="640"/></p>
+<p>There is a technique which would allow us to render colored shadows on top of transparents too. This involves keeping an additional shadow depth map for transparencies. The flow of this technique is like this (from a <a href="https://developer.amd.com/wordpress/media/2012/10/S2008-Filion-McNaughton-StarCraftII.pdf">Blizzard presentation</a>):</p>
+<ol>
+<li>Render opaque shadow map</li>
+<li>Render transparent shadow map
+<ul>
+<li>To a separate depth texture!</li>
+<li>Depth writes ON</li>
+</ul>
+</li>
+<li>Clear shadow color filter texture (like in the simple approach)</li>
+<li>Render transparent again to color filter render target
+<ul>
+<li>But use the opaque shadow map’s depth stencil</li>
+<li>depth read ON</li>
+<li>depth write OFF</li>
+</ul>
+</li>
+</ol>
+<p>And in the shading step, now there will be two shadow map checks, one for the opaque, one for the transparent shadow maps. Only multiply the light with the shadow filter color texture when the transparent shadow check fails.</p>
+<p>In my experience you can also have the transparent depth in the color texture’s alpha channel, to refine the results. (See UPDATE section at the end).</p>
+<p>This will eliminate false self shadows from transparent objects. But unfortunately now when a transparent receives a colored shadow, its own transparent shadow color will also contribute to itself.</p>
+<p>What’s more interesting, are the additional effects we can achieve with transparent shadow maps:</p>
+<p>Textured shadows, which can be used as a projector for example, just put a transparent textured geometry in front of a light:</p>
+<p><img alt="textured_shadows" decoding="async" height="480" loading="lazy" src="../../../../wp-content/uploads/2018/01/textured_shadows.gif" width="640"/></p>
+<p>And underwater refraction caustics:</p>
+<p><img alt="caustics" decoding="async" height="480" loading="lazy" src="../../../../wp-content/uploads/2018/01/caustics.gif" width="640"/></p>
+<p><strong>UPDATE:</strong> You can use the alpha channel of the transparent shadow map as a secondary depth buffer. This way, tinting volumetric light becomes possible because light between light and transparent object must be not tinted (rejected based on secondary depth). Since the multiplicative colors don’t care about alpha at all (however, the color is multiplied with alpha – 1 as a transparency factor), this is safe to use with a MAX blend operator (or MIN if you don’t use reversed Z):</p>
+<p>SrcBlendAlpha = BLEND_ONE;<br/>
+DestBlendAlpha = BLEND_ONE;<br/>
+BlendOpAlpha = BLEND_OP_MAX;<br/>
+Also use a texture format with alpha channel such as R16G16B16A16_FLOAT</p>
+<p>The secondary depth buffer will support one layer of transparency (it should be the closest transparent layer to the light), so it’s not perfect, but things rarely are in real time rendering!</p>
+<p>That’s it, I think this is a worthwhile technique to include in a game engine. This can be used for many interesting effects. Thank you for reading!</p>
+<p>My transparent shadow map rendering pixel shader can be found <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/shaders/shadowPS_transparent.hlsl">here</a>.</p>
+<p><em>Related article:<br/>
+</em><em><a href="https://developer.amd.com/wordpress/media/2012/10/S2008-Filion-McNaughton-StarCraftII.pdf">StarCraft 2 Effects and techniques</a></em></p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2018/01/10/optimizing-tile-based-light-culling/index.html">← Optimizing tile-based light culling</a>
+            <a class="newer" href="../../../../2018/02/03/thoughts-on-skinning-and-lds/index.html">Thoughts on Skinning and LDS →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

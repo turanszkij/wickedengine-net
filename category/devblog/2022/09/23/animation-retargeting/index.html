@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Animation Retargeting – Wicked Engine</title>
+    <meta name="description" content="I recently implemented animation retargeting, something that’s not frequently discussed on the internet in detail. My goal was specifically to copy animations between similar types of skeletons: humanoid to humanoid.…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2022/09/23/animation-retargeting/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Animation Retargeting</h1>
+        <p class="meta"><time datetime="2022-09-23">September 23, 2022</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>I recently implemented animation retargeting, something that’s not frequently discussed on the internet in detail. My goal was specifically to copy animations between similar types of skeletons: humanoid to humanoid. A more complicated solution for example, that can retarget humanoid animation to a frog was not my intention.</p>
+<figure class="video"><video autoplay="autoplay" controls="controls" loop="loop" muted="muted" playsinline="playsinline" poster="../../../../media/video/Qqckw2YT.jpg" preload="metadata" src="../../../../wp-content/uploads/2023/12/animation_retargeting_short-1.mp4" style="aspect-ratio: 1920 / 1080"><a href="../../../../wp-content/uploads/2023/12/animation_retargeting_short-1.mp4">Play video</a></video></figure>
+<h2>Animation basics</h2>
+<p>To start with implementing something like this, you should already have a working animation system in your program. I build upon an animation system that is based on the GLTF 2.0 specification. An animation is built from these parts:</p>
+<ul>
+<li>Target entity: an entity identifier which the animation modifies</li>
+<li>Keyframe times: a list of times, one time for every keyframe</li>
+<li>Keyframe data: a list of datas, one data for every keyframe. The implementation stores an array of floats, and uses a different stride to access them based on target path type.</li>
+<li>Target path: describes what kind if data the animation modifies. This can be anything in the engine, like locations, light color, sound volume, but for the sake of the retargeting, I'll focus on three path types: scale, rotation, translation</li>
+</ul>
+<p>For scale and translation, the keyframe data contains 3 floats for every keyframe (3D vectors), for rotation it contains 4 floats for every keyframe (quaternions). These 3D vectors and quaternions describe transformation in <strong>local space</strong>. We are always working in either <strong>local space</strong> or <strong>world world</strong> space:</p>
+<ul>
+<li>World space: This is simply the final coordinate space, where we see our transformations on the screen end up.</li>
+<li>Local space: It is the same as world space if the entity doesn't have a parent. If it has a parent, then it is relative to the parent's world space transform (as if the parent transform was the origin of the coordinate system).</li>
+</ul>
+<p>It is important that all animation data describes transformations in <strong>local space</strong>, because it allows only a subset of entities being animated, while the parenting system will handle updating children to follow the parent.</p>
+<h2>Humanoid</h2>
+<p>I mentioned that animation retargeting needs to support copying animations between humanoid skeletons. A skeleton in this context, is a hierarchy of transformations, where each transformation is stored in local space, and can have a single parent transformation (or none). A humanoid skeleton is a skeleton, in which some transformation follow a convention, we can call these conventions "bones". The implementation of a humanoid is simply a table that maps a humanoid-like bone name to a regular transform ID that our engine works with. For example:</p>
+<pre><code class="language-cpp">enum HumanoidBone
+{
+	Hips,
+	Spine,
+	Chest,
+	...
+
+	Count
+};
+
+Entity bones[HumanoidBone::Count];</code></pre>
+<p>The "Entity" is an identifier that can uniquely identify a Transform, so the above code means, that for each humanoid bone, we can say which Transform it maps to. </p>
+<p>This will be used in retargeting to move animations from one skeleton to another one. If we don't use a humanoid structure like this, we could also use string matching for example based on names, or some logical comparison of skeletons, which are out of scope for now.</p>
+<p>In Wicked Engine, if you use the GLTF loader to import a model, it will automatically generate a humanoid bone mapping if applicable. Currently this will be done if it finds a <strong>VRM_humanoid </strong>or <strong>VRMC_vrm_humanoid</strong> extensions, or <strong>"mixamorig:"</strong> naming convention while iterating skeletons.</p>
+<p>To see a good specification for humanoid bone mapping, take a look at the <a href="https://github.com/vrm-c/vrm-specification/blob/master/specification/VRMC_vrm-1.0/humanoid.md#list-of-humanoid-bones">VRM spec</a>.</p>
+<h2>Retargeting</h2>
+<p>The simplest form of retargeting requires the following steps:</p>
+<ol>
+<li>User specifies source animation and target humanoid.</li>
+<li>For each source animation target entity, find its source humanoid, and the source humanoid bone type. If it's not found, skip this entity</li>
+<li>Look up the entity in the target humanoid, based on the source bone type</li>
+<li>Change the target entity in the animation-copy to the new target</li>
+</ol>
+<p>If the skeletons were very similar, congratulations, the retargeted animation is already usable. But I want to handle skeletons that come from different packages (Mixamo vs. VRM for example), an unfortunately the animations are recorded for very differently scaled and oriented skeletons:</p>
+<figure><img alt="" decoding="async" height="1464" src="../../../../wp-content/uploads/2022/09/image.png" width="3072"/><figcaption>Mixamo rig is huge (compare it with the 10x10 unit grid near its feet) and oriented in a weird direction</figcaption></figure>
+<figure><img alt="" decoding="async" height="1525" loading="lazy" src="../../../../wp-content/uploads/2022/09/image-1.png" width="1096"/><figcaption>VRM rig is pretty small (compared to the 10x10 unit grid), oriented in a more sensible direction</figcaption></figure>
+<p>If we just blindly copy the keyframe data from the Mixamo rig to the VRM rig, the VRM model will be blown out of proportions. However, I cheated a bit on the Mixamo rig's picture, because I deleted the skeleton's parent transformation to indicate what scale the animations are recorded in. If both are properly positioned in world space, they are not so different:</p>
+<figure><img alt="" decoding="async" height="1721" loading="lazy" src="../../../../wp-content/uploads/2022/09/image-2.png" width="2199"/><figcaption>This is how they look when imported. The tricky part is that the transformation of the Mixamo skeleton (right side) is hiding the fact that its bones are in a hugely different local space.</figcaption></figure>
+<p>The skeletons are still not completely similar, because the proportions, height are different, but this is enough to work with. For potentially better results, the source skeleton could be scaled down if needed.</p>
+<p>So, what is happening here is the following: the two skeletons look <strong>similar in world space</strong>, but their <strong>local space is very different</strong>. Thus we will just work in world space and map animation <strong>differences </strong>from source to target. Then finally, we down-convert from target's world space to local space to let the animation system work without any changes.</p>
+<p>We will need to go through each keyframe in the target animation (after it was copied from source animation already) and do the following pseudo-code:</p>
+<pre><code class="language-cpp">Entity bone_source; // identifier of source bone entity (should be in T-pose)
+Entity bone_dest; // identifier of target bone entity (should be in T-pose)
+Transform transform_source = GetTransform(bone_source);
+Transform transform_dest = GetTransform(bone_dest);
+
+Matrix bindMatrix = ComputeWorldMatrixRecursive(bone_source, transform_source.GetLocalMatrix());
+Matrix inverseBindMatrix = MatrixInverse(bindMatrix);
+Matrix targetMatrix = ComputeWorldMatrixRecursive(bone_dest, transform_dest.GetLocalMatrix());
+Matrix inverseParentMatrix = ComputeInverseParentMatrixRecursive(bone_dest);
+
+switch(target_path)
+{
+case PATH_SCALE:
+for(Vector3&amp; data : target_animation.keyframe_datas)
+{
+  Transform transform = transform_source;
+  transform.scale_local = data;  // temporary update transform with animation data (T-pose to animated, local space)
+  
+  Matrix localMatrix = inverseBindMatrix * ComputeWorldMatrixRecursive(bone_source, transform.GetLocalMatrix();
+  localMatrix = targetMatrix * localMatrix * inverseParentMatrix;
+  
+  Vector S,R,T;
+  MatrixDecompose(S,R,T, localMatrix);
+  data = S; // update scale animation data with retargeted value
+}
+break;
+
+case PATH_ROTATION:
+for(Quaternion&amp; data : target_animation.keyframe_datas)
+{
+  Transform transform = transform_source;
+  transform.rotation_local = data;  // temporary update transform with animation data (T-pose to animated, local space)
+  
+  Matrix localMatrix = inverseBindMatrix * ComputeWorldMatrixRecursive(bone_source, transform.GetLocalMatrix();
+  localMatrix = targetMatrix * localMatrix * inverseParentMatrix;
+  
+  Vector S,R,T;
+  MatrixDecompose(S,R,T, localMatrix);
+  data = R; // update rotation animation data with retargeted value
+}
+break;
+
+case PATH_TRANSLATION:
+for(Vector3&amp; data : target_animation.keyframe_datas)
+{
+  Transform transform = transform_source;
+  transform.translation_local = data;  // temporary update transform with animation data (T-pose to animated, local space)
+  
+  Matrix localMatrix = inverseBindMatrix * ComputeWorldMatrixRecursive(bone_source, transform.GetLocalMatrix();
+  localMatrix = targetMatrix * localMatrix * inverseParentMatrix;
+  
+  Vector S,R,T;
+  MatrixDecompose(S,R,T, localMatrix);
+  data = T; // update translation animation data with retargeted value
+}
+break;
+}</code></pre>
+<p>So what is happening? First we create the inverseBindMatrix, this is the inverse of the source bone's T-Pose world matrix. This is used to compute source animation's <strong>difference to T-Pose in world space</strong>. The targetMatrix is the target bone's world matrix in T-pose. The source animation difference can be applied on top of it, which results in target animation's world space. The inverseParentMatrix is computed as the inverse of the target bone's parent's world matrix (in T-pose). It is used at the end to move the target animation's world space back to target's local space. Target animation local space can be used by the animation system as any other animation.</p>
+<p>The switch-case is shown because in the scale-rotation-translation keyframes are handled independently of each other. The idea of that part is that for each keyframe, we create a temporary transform that is equal to the source transform (transforms are always stored in local space). Then we update its scale/rotation/translation with the animation keyframe data. That local space transform is transformed into world space and a difference is computed to the source T-pose using the inverseBindMatrix. The difference is applied to the target world space, and down-converted back into target's local space. The retargeted keyframe data is stored in local space.</p>
+<p>Note that a lot of "recursive" matrix compute functions are used in my implementation (they are implemented with loops instead recursion, but that's not the point). I use recursive recomputation from local to world space because this way the other procedural animations that were applied to skeletons at runtime won't interfere, so I simply get back the T-pose world matrices. If you have world matrices for T-pose already available, feel free to just use them as-is. For the sake of completeness, here is pseudo-code for recursive matrix computations:</p>
+<pre><code class="language-cpp">Matrix ComputeWorldMatrixRecursive(Entity entity, Matrix localMatrix)
+{
+  Entity parentID = GetParent(entity);
+  while(parentID != INVALID_ENTITY)
+  {
+    Transform transform_parent = GetTransform(parentID);
+    localMatrix *= transform_parent.GetLocalMatrix();
+    parentID = GetParent(parentID);
+  }
+  return localMatrix;
+}
+
+Matrix ComputeInverseParentMatrixRecursive(Entity entity)
+{
+  Matrix inverseParentMatrix = IdentityMatrix();
+  Entity parentID = GetParent(entity);
+  if(parentID != INVALID_ENTITY)
+  {
+    while(parentID != INVALID_ENTITY)
+    {
+      Transform transform_parent = GetTransform(parentID);
+      inverseParentMatrix *= transform_parent.GetLocalMatrix();
+      parentID = GetParent(parentID);
+    }
+    inverseParentMatrix = MatrixInverse(inverseParentMatrix);
+  }
+  return inverseParentMatrix;
+}</code></pre>
+<p>Oh, and I should state what the Transform's GetLocalMatrix is doing, too:</p>
+<pre><code class="language-plain">struct Transform
+{
+  Vector3 scale_local;
+  Quaternion rotation_local;
+  Vector3 translation_local;
+
+  Matrix GetLocalMatrix()
+  {
+    return 
+      MatrixScaling(scale_local) * 
+      MatrixRotationQuaternion(rotation_local) * 
+      MatrixTranslation(translation_local);
+  }
+}</code></pre>
+<p>You see, the retargeting like this is not overly complicated, but it did take me several hot showers figuring out this solution that seems to work really well. Once you have a grasp on how the algorithm works, it can still be a significant headache to fit the matrix multiplication order into the math library you are using. I was using the DirectXMath library, which has <strong>row major matrices</strong>, knowing this fact may help you.</p>
+<p>If you are curious about implementation of matrix utility functions such as MatrixInverse and MatrixDecompose, check them out in the <a href="https://github.com/microsoft/DirectXMath/blob/main/Inc/DirectXMathMatrix.inl">DirectXMath library</a>, where they are named XMMatrixInverse(), and XMMatrixDecompose(). I won't describe them here. Compared to my pseudo-code, the DirectXMath library also uses XMMATRIX type instead of Matrix, and XMVECTOR type compared to Vector and Quaternion pseudo-types.</p>
+<p>Because we are working largely within world space, you are free to stretch and squish the source skeleton if you want to better match the target skeleton, this could potentially result in better fitting animations:</p>
+<figure><img alt="" decoding="async" height="1290" loading="lazy" src="../../../../wp-content/uploads/2022/09/image-4.png" width="1632"/><figcaption>Source model was scaled down a bit to better match skeleton shape (but it's not required)</figcaption></figure>
+<p>This is it for the basics of retargeting. To recap, we retarget by comparing the source and target skeletons in world space - which is what you see on screen, so you can avoid transferring animations with huge differences. Only as the last step we move the animation back to local space.</p>
+<h2>Runtime retargeting</h2>
+<p>This type of retargeting I shown is an "offline" retargeting, so it makes animation copies, but no changes needed to the existing animation system. It was purely implemented right now on the editor side, no engine changes. On the other side, you could also develop a runtime retargeting solution, which would be a constantly running system on top of your regular animation system, but it would not require making copies of existing animation data. That way, your source animation would be a single animation, and all other humanoid skeletons could compute their current pose every frame based on that. Perhaps that would be worth to have in the engine as well. </p>
+<p>Besides runtime retargeting, the humanoid rig can also assist you with some procedural modifications to the animations. For example, foot and leg spacing logic can be implemented atop Leg and Arm bone types with a little effort, to help copying animations between skinny/fat character rigs.</p>
+<p>Thanks for reading!</p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2022/07/18/game-dev-journey-10-years/index.html">← Game dev journey: 10 years</a>
+            <a class="newer" href="../../../../2022/11/08/graphics-api-secrets-format-casting/index.html">Graphics API secrets: format casting →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

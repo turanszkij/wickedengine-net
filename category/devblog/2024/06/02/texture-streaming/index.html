@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Texture Streaming – Wicked Engine</title>
+    <meta name="description" content="Texture streaming is an important feature of modern 3D engines as it is can be the largest contributor to reducing loading times and memory usage. Wicked Engine just got the first implementation of this system, and…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2024/06/02/texture-streaming/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Texture Streaming</h1>
+        <p class="meta"><time datetime="2024-06-02">June 2, 2024</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>Texture streaming is an important feature of modern 3D engines as it is can be the largest contributor to reducing loading times and memory usage. Wicked Engine just got the first implementation of this system, and here you can read about the details in depth.</p>
+<h2>Overview</h2>
+<p>There are many various forms of texture streaming, here my goal was to implement a relatively simple system that can load specific mip levels from texture files and update GPU textures from it. All this is done on a background thread, while the application is currently running and rendering. Furthermore, updating the textures is handled as visually smoothly as possible, to avoid any noticeable popping-in when new mip levels are loaded in. Here is what it looks like in action (slowed down to show the effect):</p>
+<figure class="video"><video controls="controls" playsinline="playsinline" poster="../../../../media/video/0tf43y86.jpg" preload="metadata" src="../../../../media/video/0tf43y86.mp4" style="aspect-ratio: 1920 / 1080"><a href="../../../../media/video/0tf43y86.mp4">Play video</a></video></figure>
+<p>The rough idea behind the approach I used, is to continuously run a background thread that looks for streaming texture requests, and loads the part of the textures that are required from files. When file data is loaded, the texture is recreated from scratch, and the existing texture replaced with the new one at a point in the application when appropriate. This is combines with fractional mipmap clamping and trilinear/anisotropic filtering to smoothly fade mipmaps in.</p>
+<h2>File loading</h2>
+<p>When initially loading the DDS texture, you can get away by reading only the header portion of the file to retrieve all the information about the image that you need. From that you can compute memory offsets and sizes for each individual mip, this will be useful for streaming, as later you will be able to open the DDS file, and read in just the required portion of it, containing the data of the mipmaps that you want to stream in. Since the DDS contains data in already the necessary layout that you can feed into a GPU copy operation from buffer to texture, this is ideal for us and lets you avoid memory allocations that are usually present when reading from file into memory, and then converting data to a correct layout. Instead, it is possible to immediately read the file contents into a mapped GPU buffer that will be used as the source of a GPU copy.</p>
+<p>The file loading is performed in two parts. The first in “behind the loading screen”, when the texture is opened and streaming memory offsets are calculated for each mip level, the last few low resolution mips are also loaded, and copied to a GPU texture resource. These initial mip levels will always be used when the texture is in an unused “stream out” state. This is because when the texture is unused, it can quickly become used when it gets on screen, and in this case we will show these necessary mips, until higher detail is not streamed in. The way I choose how many mip levels are necessary at minimum is that I compute the memory size of all mip levels and only keep those continuous ones which fit into a 4KB allocation. This is because for example DX12 has this 4KB as the minimum texture memory alignment, so any further reduction would not yield any memory savings. This fits us the following resolution mipchains depending on texture formats:</p>
+<ul>
+<li>R8G8B8A8: 16 x 16</li>
+<li>BC2, BC3, BC5, BC6, BC7 : 32 x 32</li>
+<li>BC1, BC4: 64 x 64</li>
+</ul>
+<p>You might find the 4 KB resolutions too small and have noticeably low res textures appearing, especially when objects appear close to the camera. An other value you could reasonably choose is 64 KB, which is the next possible resource allocation alignment after 4 KB. With that you can fit the following resolutions (with mipmaps):</p>
+<ul>
+<li>R8G8B8A8: 64 x 64</li>
+<li>BC2, BC3, BC5, BC6, BC7 : 128 x 128</li>
+<li>BC1, BC4: 256 x 256</li>
+</ul>
+<p>The other part is after the “loading screen”, when the application is running and rendering, we are loading in higher resolution mip levels depending on where the camera is looking at, and also unloading high resolution mip levels that wouldn’t contribute to the rendering. This can be running on a background thread, detached from the update frequency of the main loop.</p>
+<h2>Streaming thread</h2>
+<p>The background streaming thread’s job is to open DDS files, and read the required mip levels from it, then add it to the texture, or remove mips. To facilitate fast streaming from files to memory, it is imperative to minimize file reading where we can. Even when we are doing these file accesses on a background thread, it’s still important to load them in as fast as possible, because requests are made in real time, and if loading is slow then it will have a noticeable visual impact, as in textures appearing blurry up close. For this, the best thing we can do is to not load the whole DDS texture files every time, but instead only those parts of it that we are streaming in currently. When initially loading the DDS file behind the loading screen, we already read in the header part of DDS, which tells us all the information of the texture that we need. We can compute memory offsets and sizes of each sub-resource (mip level and slice) from the DDS header, and we can either remember these offsets as part of the streaming info, or just save the DDS header itself. The streaming info is a small structure containing information of the whole texture file that tracks the progress of the streaming, it can look something like this:</p>
+<pre><code>struct StreamingTexture
+{
+	struct StreamingSubresourceData
+	{
+		size_t data_offset = 0;
+		uint32_t row_pitch = 0;
+		uint32_t slice_pitch = 0;
+	};
+	StreamingSubresourceData streaming_data[16] = {}; // sub-resource data for every mip level
+	uint32_t mip_count = 0; // mip count of full resource
+	float min_lod_clamp_absolute = 0; // relative to mip_count of full resource
+};</code></pre>
+<p>We can populate this structure when we initially load the texture, and reuse it when streaming requests arrive. It tells us the total number of mipmaps in the whole resource, and a sub-resource data for each mip level. Notice that the sub-resource data is nearly the same as what you would give to DirectX 11 texture creation, but instead of a data pointer, it contains an offset, which is the offset inside the file. The offset can simply give you the offset from which you want to read the file from (seek in file). Since you know the data format and width/height of the texture that you are streaming, you can compute the data size of the sub-resource  from those, and use that for telling how many bytes to read from the file. In my implementation, I simply read through the end of the file from the beginning of a specific sub-resource, because I always re-create textures from scratch, so I always load all lower mips as well in a streaming request. For now, it seems fast enough, but it feels like a bit of a waste. This way I didn’t need to issue GPU copies from previous resource to the new one, simply give all the data needed for texture creation.</p>
+<p>To load these offsets from DDS, I have created a custom DDS file utility that you can <a href="https://github.com/turanszkij/dds/blob/main/dds.h">download here</a>. I wasn’t satisfied with other DDS loaders that I used, because they make allocations internally and have dependencies. My DDS loader is cross-platform, as minimal as possible without any include files, and designed with streaming in mind. After using the <code>dds::read_header()</code> function, you get back exactly the DDS header structure which you can use to query all information of the texture, with relative memory offsets. A simple example:</p>
+<pre><code>dds::Header header = dds::read_header(filedata, filesize);
+if (header.is_valid())
+{
+	TextureDesc desc;
+	desc.width = header.width();
+	desc.height = header.height();
+	desc.depth = header.depth();
+	desc.mip_levels = header.mip_levels();
+	desc.array_size = header.array_size();
+	desc.format = header.format();
+
+	std::vector&lt;SubresourceData&gt; initdata;
+	initdata.reserve(desc.array_size * desc.mip_levels);
+	for (uint32_t slice = 0; slice &lt; desc.array_size; ++slice)
+	{
+		for (uint32_t mip = 0; mip &lt; desc.mip_levels; ++mip)
+		{
+			SubresourceData&amp; subresourceData = initdata.emplace_back();
+			subresourceData.data_ptr = filedata + header.mip_offset(mip, slice);
+			subresourceData.row_pitch = header.row_pitch(mip);
+			subresourceData.slice_pitch = header.slice_pitch(mip);
+		}
+	}
+
+	device-&gt;CreateTexture(&amp;desc, initdata.data(), &amp;texture);
+}</code></pre>
+<p>It also supports DDS writing, so you might find this useful for other purposes too.</p>
+<p>Every frame, the streaming thread is started as a low priority thread, if it’s not already running. If it’s already running, that means that previous streaming tasks have not finished. This is normal, as they will usually span a longer time than a render frame. If this happens, we just cancel until the next frame. The streaming thread is set to low priority, to not disturb any high priority rendering or update jobs in the job system, I found that otherwise a long running high priority thread can cause stuttering. Inside this background thread, we will go through each texture that is marked for streaming and check which resolutions they requested (more on this later). Compared to their current resolution, they either need to stream in higher res mips, they can remove mips, or do nothing if the current level of detail is already satisfied. Removing mips doesn’t always happen if they have a lower resolution request, but only after a certain amount of time elapsed, this avoids removing mips of an object that moves in-and-out of the camera. This logic is changed when we detect that memory usage of the application is above a certain threshold, in that case dropping mip levels will happen earlier when appropriate. This is roughly what happens on the background thread in Wicked Engine at the time of writing this:</p>
+<pre><code>for(auto&amp; resource : streaming_texture_jobs)
+{
+	TextureDesc desc = resource.GetTexture().GetDesc(); // current texture description, with current resolution, etc, not the full resource resolution
+	uint32_t requested_resolution = resource.get_request(); // read the requested resolution (assuming square texture)
+	const GraphicsDevice::MemoryUsage memory_usage = device-&gt;GetMemoryUsage();
+	const float memory_percent = float(double(memory_usage.usage) / double(memory_usage.budget)); // percent of how much memory is used relative to the budget
+	const bool memory_shortage = memory_percent &gt; streaming_threshold; // check if we are above the threshold and we are short on memory
+	const bool stream_in = memory_shortage ? false : (requested_resolution &gt;= std::min(desc.width, desc.height));
+
+	int mip_offset = int(resource.streaming_texture.mip_count - desc.mip_levels); // what mip are we currently on relative to the full resource
+	if (stream_in)
+	{
+		resource.streaming_unload_delay = 0; // unloading will be immediately halted
+		if (mip_offset == 0)
+			continue; // Can't go up a mip level because we are already on the most detailed, cancel
+		// Mip level streaming IN, increase resolution:
+		desc.width &lt;&lt;= 1;
+		desc.height &lt;&lt;= 1;
+		if (requested_resolution &lt; std::min(desc.width, desc.height))
+			continue; // Increased resolution would be too much, cancel
+		desc.mip_levels++;
+		mip_offset--;
+	}
+	else
+	{
+		resource.streaming_unload_delay++; // one more frame that this wants to unload
+		if (!memory_shortage &amp;&amp; resource.streaming_unload_delay &lt; 255)
+			continue; // only unload mips if it's been wanting to unload for a couple frames, or there is memory shortage
+		if (ComputeTextureMemorySizeInBytes(desc) &lt;= 4096)
+			continue; // Don't reduce the texture below, because of 4KB alignment, this would not reduce memory usage further
+		// Mip level streaming OUT, reduce resolution:
+		desc.width &gt;&gt;= 1;
+		desc.height &gt;&gt;= 1;
+		desc.mip_levels--;
+		mip_offset++;
+	}
+	if (desc.mip_levels &lt;= resource.streaming_texture.mip_count) // check if new mip count is still in the valid range of full texture mip count
+	{
+		std::ifstream file(resource.streaming_filename, std::ios::binary | std::ios::ate); // open the file in binary mode
+		if (!file.is_open())
+			continue; // file cannot be found, cancel
+
+		// memory offset of the first mip level in current streaming range:
+		const size_t mip_data_offset = resource.streaming_texture.streaming_data[mip_offset].data_offset;
+
+		// Read in the file contents beginning from the specified mip:
+		std::vector&lt;uint8_t&gt; streaming_filedata;
+		size_t dataSize = (size_t)file.tellg() - mip_data_offset;
+		file.seekg((std::streampos)mip_data_offset);
+		streaming_filedata.resize(dataSize);
+		file.read((char*)streaming_filedata.data(), dataSize);
+		file.close();
+
+		const uint8_t* firstmipdata = streaming_filedata.data(); // pointer of first mip in current streaming data
+
+		// Convert relative to absolute GPU initialization data
+		SubresourceData initdata[16] = {};
+		for (uint32_t mip = 0; mip &lt; desc.mip_levels; ++mip)
+		{
+			auto&amp; streaming_data = resource.streaming_texture.streaming_data[mip_offset + mip];
+			initdata[mip].data_ptr = firstmipdata + streaming_data.data_offset - mip_data_offset;
+			initdata[mip].row_pitch = streaming_data.row_pitch;
+			initdata[mip].slice_pitch = streaming_data.slice_pitch;
+		}
+
+		// The replacement struct will store the newly created texture until replacement can be made later:
+		StreamingTextureReplace replace;
+		replace.resource = resource;
+		device-&gt;CreateTexture(&amp;desc, initdata, &amp;replace.texture);
+
+		streaming_replacement_mutex.lock();
+		streaming_texture_replacements.push_back(replace); // Store the replacement texture
+		streaming_replacement_mutex.unlock();
+	}
+}</code></pre>
+<p>That’s quite a big chunk of logic. What’s important, is that we determine if the texture requires any streaming (always only increase or decrease mip levels by one), and do the data reading from file if it does, then create the texture. As I previously mentioned, there is some wasted processing because we always create the texture from scratch by providing fully initialized data from scratch. But the texture creation function is thread safe and we can do this on a background thread without any additional considerations. Otherwise if we want to only load the streamed in mip and retain the previously existing ones, we need to do GPU copies which will involve creating command lists, GPU submission logic, and possibly using sparse/tiled resources to avoid recreating textures. I found that my solution that is recreating textures has a good enough performance for now.</p>
+<p>One thing to note that while we are creating the texture fully on the background thread, we are not replacing resources with the new textures there, because rendering might be currently using them, Instead, there is a part of the streaming logic that is running on the main thread that does minimal processing.</p>
+<h2>Streaming – finalize</h2>
+<p>The finalization logic that must happen on the main thread, and synchronized with rendering is responsible for replacing the current texture resources with the newly streamed in ones. Note that this is happening every frame, even when the previous streaming jobs haven’t finished yet. This allows to update those textures that have been streamed as soon as possible, not waiting for the whole streaming thread to finish, which might take several frames’ time. In turn, we must synchronize this part by using a mutex (see the usage of streaming_replacement_mutex in the previous code). The StreamingTextureReplace structure can look like this:</p>
+<pre><code>struct StreamingTextureReplace
+{
+	Resource resource; // resource containing current texture
+	Texture texture; // new texture, result of streaming
+};</code></pre>
+<p>The finalization logic which is performed every frame is simply this:</p>
+<pre><code>// If any streaming replacement requests arrived, replace the resources here (main thread):
+streaming_replacement_mutex.lock();
+for (auto&amp; replace : streaming_texture_replacements)
+{
+	replace.resource.SetTexture(replace.texture); // previous texture is deleted automatically when GPU no longer uses it
+}
+streaming_texture_replacements.clear();
+streaming_replacement_mutex.unlock();</code></pre>
+<p>With this, the textures will be updated, but not smoothly, as they will be just replaced with textures that have a new mipmap count, so it will look like pop-in. To smoothly update the mipmaps of the textures, we need an additional step.</p>
+<h2>Smooth mipmap changing</h2>
+<p>You might have noticed the unexplained member of the StreamingTexture struct: min_lod_clamp_absolute. This is a float value which is used exactly for smoothing out the mipmap level changes. In DirectX 12, you can set up a texture SRV descriptor with the <code>ResourceMinLODClamp</code> parameter, which is used to tell the GPU the highest detailed mipmap that is allowed to be used at texture sampling, but unlike the <code>MostDetailedMip</code> value, this is a <code>float</code> which allows this to be a fractional value. The fractional value makes sense only when you are using a trilinear or anisotropic sampler, because then the texture sampling will fade between two mipmaps based on the computed texture LOD, which is exactly what we need.</p>
+<p>Note that in Vulkan, you must use the <a href="https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_EXT_image_view_min_lod.html"><code>VK_EXT_image_view_min_lod</code> </a>extension to have this functionality, and in DirectX 11, this is not part of the descriptor, but you can set this as a command list function, <code><a href="https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-setresourceminlod">SetResourceMinLOD()</a></code>.</p>
+<p>The <code>min_lod_clamp_absolute</code> value is not exactly the minLOD parameter that you give to the graphics API, but I use it as a float value to track current mip level relative to the full resource. From that, we can compute the value that can be used relative to the currently streamed resource. Once, we detect that the relative value changes compared to the previous one, we can update the texture descriptor. Updating the texture descriptor involves freeing the current one and creating a new one with the new minLOD parameter, this happens on the main thread every frame, while also noting that you must not delete descriptors that the GPU might still be using:</p>
+<pre><code>for (auto&amp; x : resources)
+{
+	const TextureDesc&amp; desc = resource.GetTexture().GetDesc();
+	const float mip_offset = float(resource.streaming_texture.mip_count - desc.mip_levels);
+	float min_lod_clamp_absolute_next = resource.streaming_texture.min_lod_clamp_absolute - dt * streaming_fade_speed; // dt: delta time in seconds, streaming_fade_speed: 4.0f by default
+	min_lod_clamp_absolute_next = std::max(mip_offset, min_lod_clamp_absolute_next);
+	if (float_equal(min_lod_clamp_absolute_next, resource.streaming_texture.min_lod_clamp_absolute))
+		continue;
+	resource.streaming_texture.min_lod_clamp_absolute = min_lod_clamp_absolute_next;
+
+	const float min_lod_clamp_relative = min_lod_clamp_absolute_next - mip_offset;
+
+	device-&gt;DeleteSubresources(&amp;resource.GetTexture());
+	device-&gt;CreateSubresource(
+		&amp;resource.GetTexture(),
+		SubresourceType::SRV,
+		...
+		min_lod_clamp_relative // apply new minLODClamp value
+	);
+}</code></pre>
+<p>Explanation: Always try to update the <code>min_lod_clamp_absolute</code> to decrease towards the highest detailed mip, while clamping it to not go below the <code>mip_offset</code> that’s currently streamed in. If the updated <code>min_lod_clamp_absolute_next</code> is not equal to <code>min_lod_clamp_absolute</code>, then update the descriptor relative to the <code>mip_offset</code>. This means that if new texture detail is streamed in, then it will update smoothly, if no new updates happened for that texture, then the descriptor won’t be updated either. For streaming that removed mip levels, it’s not needed to perform smooth lod clamping, as it means those are not visible anyway.</p>
+<p>For the sake of completeness, here is the float equals comparison check that the above code uses, it returns true if two floats are near equal, and false otherwise:</p>
+<pre><code>inline bool float_equal(float f1, float f2) {
+	return (std::abs(f1 - f2) &lt;= std::numeric_limits&lt;float&gt;::epsilon() * std::max(std::abs(f1), std::abs(f2)));
+}</code></pre>
+<p> One important step is still missing though, which is how we determine what mip levels should be visible.</p>
+<h2>Requesting texture detail</h2>
+<p>I’ve tried two methods to tell the streaming system which mipmaps should be visible. At first, I just determined objects’s visibility on the CPU (frustum culling, occlusion culling) and if it’s visible, then tell the streaming to always stream IN, meaning it requested all the mip levels to be available for all textures that the object uses. Otherwise, it would start discarding all mip levels above the 4KB threshold. This is the simplest way, and it works okay, you can get plenty of memory savings already with this, and I recommend to implement this first.</p>
+<p>But that solution is a bit too simplistic and it is just not good enough, think of when the camera is viewing a large distance, where objects far away will also request high resolution mip levels. When sampling the textures in the shaders, the GPU is computing exactly which mip levels it will read at every pixel. It would be good to know what the GPU will need exactly, so we can get away with only streaming those specific mips. The approach I settled on works exactly like this. </p>
+<p>In the Wicked Engine shaders we can directly index the materials with a material index, and in my implementation each material can request the required texture resolution based on the derivatives of the UV coordinates of the pixel. So I created a <code>RWBuffer&lt;uint&gt;</code>, storing one uint32 for every material in the scene, which any shader can write into with the material index that it is running with. The 32 bit uint contains a texture resolution request for two UV sets, the first UV set in the lower, the second is in the upper 16 bits. Since the maximum resolution of a texture asset is 16384 pixels, and 16 bits is capable of storing 65536 values, this is more than enough. From the UV derivatives it is easy to compute the required mipmap LOD, and from that it becomes straight forward to compute a resolution value for the request. </p>
+<pre><code>inline float get_lod(in uint2 dim, in float2 uv_dx, in float2 uv_dy)
+{
+	return log2(max(length(uv_dx * dim), length(uv_dy * dim)));
+}
+
+RWBuffer&lt;uint&gt; materialFeedbackBuffer;
+inline void write_mipmap_feedback(uint materialIndex, float4 uvsets_dx, float4 uvsets_dy)
+{
+	const float lod_uvset0 = get_lod(65536u, uvsets_dx.xy, uvsets_dy.xy);
+	const float lod_uvset1 = get_lod(65536u, uvsets_dx.zw, uvsets_dy.zw);
+	const uint resolution0 = 65536u &gt;&gt; uint(max(0, lod_uvset0));
+	const uint resolution1 = 65536u &gt;&gt; uint(max(0, lod_uvset1));
+	const uint mask = resolution0 | (resolution1 &lt;&lt; 16u);
+	InterlockedOr(materialFeedbackBuffer[materialIndex], mask);
+}</code></pre>
+<p>The <code>write_mipmap_feedback</code> shader function above is used per pixel to write a resolution request into the feedback buffer at the current material Index. The <code>get_lod</code> function is taken from the <a href="https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#7.18.11%20LOD%20Calculations">DirectX 11 specs</a>, and it is an example implementation of computing the texture LOD for trilinear filtering. For anisotropic filtering, it would be different if you wanted to use the LOD level as-is, but in this case it is enough because we take the conservative overestimated LOD by casting it to uint. It’s important that we are conservative, because we want to request the highest resolution that the sampling will touch, and in the end we will be using anisotropic sampler in the hardware, so we don’t need to compute the exact values here.</p>
+<p>Take notice, that we don’t want to write out the LOD level into the feedback, but instead we compute the LOD relative to a 65K resolution, and we convert that to an actual resolution value. This is important, because a material can contain several texture assets with varying resolutions, so we can use this single request for all of them. Requesting a higher resolution for a texture than the asset contains is not a problem, it will simply stream in up to the resolution that is available in the file.</p>
+<p>In a pixel shader you can call this feedback function like this (in this case the material index is coming from a push constant, uvsets is a float4 containing UV0 in .xy, and UV1 in .zw):</p>
+<pre><code>write_mipmap_feedback(push.materialIndex, ddx_coarse(uvsets), ddy_coarse(uvsets));</code></pre>
+<p>You probably only want to call it from your main camera rendering, and not for shadow map rendering, which will probably cover a larger area and request more streaming in than it is really necessary. It is also better if you can call it from a shader which uses <code>[earlydepthstencil]</code> and equal depth test because writing into RWBuffer will be more optimal – but this is probably only available if you use a depth prepass.</p>
+<p>One very easy optimization that you can do with DX12 and Vulkan is to reduce atomics with wave intrinsics. Just rewrite the feedback function like this:</p>
+<pre><code>inline void write_mipmap_feedback(uint materialIndex, float4 uvsets_dx, float4 uvsets_dy)
+{
+	const float lod_uvset0 = get_lod(65536u, uvsets_dx.xy, uvsets_dy.xy);
+	const float lod_uvset1 = get_lod(65536u, uvsets_dx.zw, uvsets_dy.zw);
+	const uint resolution0 = 65536u &gt;&gt; uint(max(0, lod_uvset0));
+	const uint resolution1 = 65536u &gt;&gt; uint(max(0, lod_uvset1));
+	const uint mask = resolution0 | (resolution1 &lt;&lt; 16u);
+	const uint wave_mask = WaveActiveBitOr(mask);
+	if(WaveIsFirstLane())
+	{
+		InterlockedOr(materialFeedbackBuffer[materialIndex], wave_mask);
+	}
+}</code></pre>
+<p>It is still doing the same thing (if material index is uniform for the whole wave), but it reduces to 1 atomic operation per wave. That means it will reduce the atomics by 1/64 on AMD or 1/32 on Nvidia (or newer AMD with wave32 mode). If you can’t use wave operations, for example on DX11, you can try to reduce atomics by only running this for every Nth pixel, that requires some testing to see how far you can reduce it before seeing inaccurate results.</p>
+<p>That was the part that you do on the GPU, but you will need to read these results back on the CPU. If you use DX12 and Vulkan, reading back results can be done quite optimally, do a GPU copy from the feedback RW buffer into a buffer on a READBACK heap. The buffer on the READBACK heap can be mapped persistently, and you can save the CPU pointer to its data. Then you can simply read from that uint32_t pointer like you would read from an array.</p>
+<p>When updating the materials, I read back the GPU results from the feedback buffer, and set the streaming request for every texture of the material:</p>
+<pre><code>if (textureStreamingFeedbackMapped != nullptr)
+{
+	const uint32_t request_packed = textureStreamingFeedbackMapped[args.jobIndex];
+	const uint32_t request_uvset0 = request_packed &amp; 0xFFFF;
+	const uint32_t request_uvset1 = (request_packed &gt;&gt; 16u) &amp; 0xFFFF;
+	for (auto&amp; slot : material.textures)
+	{
+		if (slot.resource.IsValid())
+		{
+			slot.resource.StreamingRequestResolution(slot.uvset == 0 ? request_uvset0 : request_uvset1);
+		}
+	}
+}</code></pre>
+<p>Because the material update runs on multiple threads, and also one texture can be contained by multiple materials, I use atomics to update the requests on CPU. This is roughly implemented like this, using the atomic binary OR of an <code>std::atomic&lt;uint32_t&gt;</code>:</p>
+<pre><code>struct Resource
+{
+	// ...
+	std::atomic&lt;uint32_t&gt; streaming_resolution{ 0 };
+
+	void StreamingRequestResolution(uint32_t resolution)
+	{
+		streaming_resolution.fetch_or(resolution);
+	}
+};</code></pre>
+<p>One thing to look out for, is that since the streaming thread is also running on a separate thread, you must also use atomic operation there to read the result, and also that thread will zero out the result as well for the next round of requests. You can do it all in one go with the <code>fetch_and(0)</code> which will do exactly this. The streaming thread code that I shown above contains a function called <code>get_request()</code>, which you can implement like this:</p>
+<pre><code>uint32_t get_request()
+{
+	uint32_t requested_resolution = streaming_resolution.fetch_and(0); // set to zero while returning prev value
+	if (requested_resolution &gt; 0) // if 0, it means there was no request
+	{
+		requested_resolution = 1ul &lt;&lt; (31ul - firstbithigh((unsigned long)requested_resolution)); // largest power of two
+	}
+}</code></pre>
+<p>Note that we used atomic OR operation to write all resolution requests, the value contains a bitmask of all requests, but we want to get the largest power of two request (because all of the separate request were power of two, see the implementation of the <code>write_mipmap_feedback</code> shader function). The <code>firstbithigh</code> is originally a <a href="https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/firstbithigh">built-in HLSL shader function</a>, but you can implement it with CPU intrinsics like so:</p>
+<pre><code>#ifdef _WIN32
+// Windows:
+#include &lt;intrin.h&gt;
+inline unsigned long firstbithigh(unsigned long value)
+{
+	unsigned long bit_index;
+	if (_BitScanReverse(&amp;bit_index, value))
+	{
+		return 31ul - bit_index;
+	}
+	return 0;
+}
+#else
+// Linux:
+inline unsigned long firstbithigh(unsigned int value)
+{
+	if (value == 0)
+	{
+		return 0;
+	}
+	return __builtin_clz(value);
+}
+#endif // _WIN32</code></pre>
+<p>This function returns the position of the first set bit, counting from the top. With that value we can shift a 1 bit into the correct place to get us the power of two value we are looking for, which is the highest pow2 resolution request for the current texture.</p>
+<h2>Other details</h2>
+<p>Since in Wicked Engine it is possible to embed texture resources into the scene files (in fact the Editor does this by default), this case is handled with an extra step. The streaming textures can also remember not only their own file name, but the file name of the scene file they are a part of. The scene file is a large binary file that can contain all assets embedded into it, so each streaming resource also needs its offset in this file. With this information, we can still stream mip levels from these large scene files.</p>
+<p>The resource manager also has a mode that retains all asset files in memory, this is used by the Editor currently to save resources later into the scene. In this case, it is also handled that files won’t be re-opened when streaming, mip levels will be streamed from memory. This could be considered in a game too as it can improve streaming performance, but this will result in increased RAM usage, while VRAM usage can still be controlled well by streaming in/out of it.</p>
+<p>Tiled resources could be used for a smarter streaming scheme, where you don’t always re-create textures, but you can control tile residency like virtual memory management. My experience with this is that it can add unexpected slowdowns when doing the tile mapping (UpdateTileMappings/vkQueueBindSparse), and it also has some additional hardware requirements (see <a href="https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_tiled_resources_tier">Tiled Resource Tier</a>). If you support Tiled Resource Tier 2, then you can also avoid recreating descriptors when changing the resourceMinLODClamp, as that hardware will support the minLodClamp parameter in texture sampling instructions, so you can change it to a shader parameter instead. </p>
+<p>For the time I avoided going smaller granularity, like streaming in smaller blocks of textures, like in a virtual texture approach – the Wicked Engine terrain system uses virtual textures, but those blocks are generated procedurally on the GPU and not streamed from files. The problem with a block streaming approach is that ideally it would require storing texture as blocks in the file, otherwise we would end up reading larger portions of the file to retrieve smaller parts of it. But the overall memory saving might be a lot better if we only load in the small parts of the texture that are visible.</p>
+<p>I also haven’t experimented with sampler feedback or DirectStorage yet. Sampler feedback would be relevant if we are streaming texture blocks with tiled resources, but the DirectStorage could be useful even for whole mipmap streaming. </p>
+<h2>Closing</h2>
+<p>That’s essentially it, I’m sure there are many opportunities for improvement, but this approach worked out well for me so far.</p>
+<p>If you want to check out the actual implementation, you can look at the Wicked Engine source code, for example:</p>
+<ul>
+<li>In <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/wiResourceManager.cpp">wiResourceManager.cpp</a>, look for the function named <code>UpdateStreamingResources()</code> which contains the whole logic of the streaming thread, resource replacements and mip clamp updates. It is called once every frame.</li>
+<li>In <a href="https://github.com/turanszkij/WickedEngine/blob/master/WickedEngine/shaders/globals.hlsli">globals.hlsli</a> you will find the <code>write_mipmap_feedback()</code> shader function</li>
+</ul>
+<p>Thank you for reading this far, hope you found it useful!</p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2023/11/16/dynamic-vertex-formats/index.html">← Dynamic vertex formats</a>
+            <a class="newer" href="../../../../2024/12/10/wicked-engines-graphics-in-2024/index.html">Wicked Engine’s graphics in 2024 →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

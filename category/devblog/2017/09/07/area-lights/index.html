@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Area Lights – Wicked Engine</title>
+    <meta name="description" content="I am trying to get back into blogging. I thought writing about implementing area light rendering might help me with that.">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2017/09/07/area-lights/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Area Lights</h1>
+        <p class="meta"><time datetime="2017-09-07">September 7, 2017</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p><img alt="arealight" decoding="async" height="540" src="../../../../wp-content/uploads/2017/09/arealight.gif" width="960"/></p>
+<p>I am trying to get back into blogging. I thought writing about implementing area light rendering might help me with that.</p>
+<p>If you are interested in the full source code, pull my implementetion from the <a href="https://github.com/turanszkij/WickedEngine/blob/62d1d02691286cc6c25da61294bfb416d018782b/WickedEngine/lightingHF.hlsli#L230">Wicked Engine lighting shader [archived link to old source code version].</a> I won’t post it here, because I’d rather just talk about it.</p>
+<p>A <a href="https://www.slideshare.net/DICEStudio/moving-frostbite-to-physically-based-rendering">2014 Siggraph presentation from Frostbite</a> caught my attention for showcasing their research on real time area light rendering. When learning graphics programming from various tutorials, there is explanations for punctual light source rendering, like point, spot and directional lights. Even most games get away with using these simplistic light sources.</p>
+<p>For rendering area lights, we need much more complicated light equations and more performance requirements for our shaders. Luckily, the above mentioned presentation came with a paper with all the shaders for diffuse light equations for spherical, disc, rectangular and tube light sources.</p>
+<p>The code for specular lighting for these type of lights was not included in that paper, but it mentioned the “<strong>representative point method</strong>“. What this technique essentially does is that you keep the specular calculation, but change the light vector. The light vector was the vector pointing from the light position to the surface position. But for our lights, we are not interested in the reflection between the light’s center and the surface, but between the light “mesh” and the surface.</p>
+<h2>Representative point method</h2>
+<p>If we modify the light vector to point from the surface to the closest point on the light mesh to the reflection vector, then we can keep using our specular BRDF equation and we will get a nice result; the specular highlight will be in the shape of the light mesh (or somewhere close to it). It is important, that this is not a physically accurate model, but it is something nice which is still performant in real time.</p>
+<p>My first intuition was just that we could trace the mesh with the reflection ray. Then our <strong>light vector (L)</strong> is the vector from the <strong>surface point (P)</strong> to the <strong>intersection point (I)</strong>, so <strong>L=I-P</strong>. The problem is, what if there is no intersection? Then we won’t have a light vector to feed into our specular brdf. This way we are only getting hard cutoff reflections, and surface roughness won’t work because the reflections can’t be properly “blurred” on the edges where there is no trace hit.</p>
+<p>The correct approach to this is, that we have to find the closest point on mesh from the reflection ray. If the trace succeeds, then our closest point is the hit point, if not, then we have to “rotate” the light vector to sucessfully trace the mesh. We don’t actually rotate, just find the <strong>closest point (C)</strong>, and so our new light vector is: <strong>L=C-P</strong>.</p>
+<p>See the image below (<strong>V = view vector, R = reflection vector</strong>):</p>
+<p><img alt="representative_point" decoding="async" height="600" loading="lazy" src="../../../../wp-content/uploads/2017/09/representative_point.png" width="800"/>For all our four different light types, we have to come up with the code to find the closest point.</p>
+<ul>
+<li>Sphere light:
+<ul>
+<li>This one is simple: first, calculate the <strong>real reflection vector (R)</strong> and the old <strong>lightvector (L)</strong>. Additional symbols: <strong>surface normal vector (N) </strong>and<strong> view vector (V).</strong><code>R = reflect(V, N);</code><code>centerToRay = dot(L,R) * R - L;</code>
+<pre><code>closestPoint = L + centerToRay * saturate(lightRadius / length(centerToRay));</code></pre></li>
+</ul>
+</li>
+</ul>
+<ul>
+<li>Disc light:
+<ul>
+<li>The idea is, first trace the disc plane with the reflection vector, then just calculate the closest point to the sphere from the plane intersection point like for the sphere light type. Tracing a plane is trivial:<code>distanceToPlane = dot(planeNormal, (planeOrigin - rayOrigin) / dot(planeNormal, rayDirection));</code><em>planeIntersectionPoint = rayOrigin + rayDirection * distanceToPlane;</em></li>
+</ul>
+</li>
+</ul>
+<ul>
+<li>Rectangle light:
+<ul>
+<li>Now this is a bit more complicated. The algorithm I use consists of two paths: The first path is when the reflection ray could trace the rectangle. The second path is, when the trace didn’t succeed. In that case, we need to find the intersection with the plane of the rectangle, then find the closest point on one of the four edges of the rectangle to the plane intersection point.</li>
+<li>For tracing the rectangle, I trace the two triangles that make up the rect and take the correct intersection if it exists. Tracing a triangle involves tracing the triangle plane, then deciding if we are inside the triangle. <strong>A, B, C</strong> are the triangle corner points.<code>planeNormal = normalize(cross(B - A, C - B));</code><em>planeOrigin = A;</em>
+<pre><code>t = Trace_Plane(rayOrigin, rayDirection, planeOrigin, planeNormal);</code></pre>
+<p><em>p = rayOrigin + rayDirection * t</em><code>N1 = normalize(cross(B - A, p - B));</code></p>
+<pre><code> N2 = normalize(cross(C - B, p - C));
+ N3 = normalize(cross(A - C, p - A));d0 = dot(N1, N2);
+ d1 = dot(N2, N3);
+intersects = (d0 &gt; 0.99) AND (d1 &gt; 0.99);</code></pre>
+
+
+</li>
+<li>The other algorithm is finding the closest point on line segment from point. <strong>A and B</strong> are the line segment endpoints. <strong>C</strong> is the point on the plane.<code>AB = B - A;</code><code>t = dot(C - A, AB) / dot(AB, AB);</code>
+<pre><code>closestPointOnSegment = A + saturate(t) * AB;</code></pre></li>
+</ul>
+</li>
+</ul>
+<ul>
+<li>Tube light:
+<ul>
+<li>First, we should calculate the closest point on the tube line segment to <strong>R. </strong>Then just place a sphere on that point and do as we did for the sphere light (that is, calculate the closest point on sphere to the reflection ray <strong>R</strong>). Every algorithm is already described already to this point, so all that needs to be done is just put them together.</li>
+</ul>
+</li>
+</ul>
+<p>So what to do when you have the closest point on the light surface? You have to convert it to the new light vector: <strong>newLightVector = closestPoint – surfacePos</strong>.</p>
+<p>When you have your new light vector, you can feed it to the specular brdf function and in the end you will get a nice specular highlight!</p>
+<h2>Shadows</h2>
+<p>With the regular shadow mapping techniques, we can do shadows for area lights as well. Results are again not accurate, but get the job done. In Wicked Engine, I am only doing regular cube map shadows for area lights like I would do for point lights. I can not say I am happy with them, especially for long tube lights for example. In an other engine however, I have been experimenting with <a href="http://graphicsrunner.blogspot.hu/2008/07/dual-paraboloid-shadow-maps.html">dual paraboloid shadow mapping</a> for point lights. I recommend a single paraboloid shadow map for the disc and rectangle are lights in the light facing direction. These are better in my opinion than regular perspective shadow maps, because they distort very much for high field of views (these light types would require near 180 degrees of FOV).</p>
+<p>For the sphere and tube light types I still recommend cubemap shadows.</p>
+<p>Original sources:</p>
+<ul>
+<li><a href="https://www.slideshare.net/DICEStudio/moving-frostbite-to-physically-based-rendering">Moving Frostbite to Physically Based Rendering by Sebastien Lagarde, Charles de Rousiers, Siggraph 2014</a></li>
+<li><a href="http://blog.selfshadow.com/publications/s2013-shading-course/karis/s2013_pbs_epic_notes_v2.pdf">Representative point technique for speculars based on Brian Karis’s Siggraph presentation</a></li>
+<li><a href="http://graphicsrunner.blogspot.hu/2008/07/dual-paraboloid-shadow-maps.html">Dual paraboloid shadow mapping tutorial</a></li>
+</ul>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2017/08/30/voxel-based-global-illumination/index.html">← Voxel-based Global Illumination</a>
+            <a class="newer" href="../../../../2017/09/09/skinning-in-compute-shader/index.html">Skinning in a Compute Shader →</a>
+        </nav>
+    </article>
+
+</body>
+</html>

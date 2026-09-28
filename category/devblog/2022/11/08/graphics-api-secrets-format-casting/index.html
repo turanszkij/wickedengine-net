@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graphics API secrets: format casting – Wicked Engine</title>
+    <meta name="description" content="If you spend a long enough time in graphics development, the time will come eventually when you want to cast between different formats of a GPU resource. The problem is that information about how to do this was a bit…">
+    <link rel="canonical" href="https://wickedengine.net/category/devblog/2022/11/08/graphics-api-secrets-format-casting/index.html">
+    <link rel="stylesheet" href="../../../../../../style.css">
+    <link rel="icon" type="image/png" href="../../../../../../favicon.png">
+</head>
+<body>
+
+    <header>
+        <h1><a href="../../../../../../index.html">Wicked Engine</a></h1>
+        <nav>
+            <a href="../../../../../../index.html">Home</a>
+            <a href="../../../../../../downloads.html">Downloads</a>
+            <a href="../../../../../../blog.html" class="active">Blog</a>
+            <a href="../../../../../../about.html">About</a>
+        </nav>
+    </header>
+
+    <article class="post">
+        <h1>Graphics API secrets: format casting</h1>
+        <p class="meta"><time datetime="2022-11-08">November 8, 2022</time> · <a href="../../../../../../blog.html">Devblog</a></p>
+        <div class="body">
+<p>If you spend a long enough time in graphics development, the time will come eventually when you want to cast between different formats of a GPU resource. The problem is that information about how to do this was a bit hard to come by – until now.</p>
+<h2>When is casting necessary?</h2>
+<p>You will need to rely on casting when you want to use one resource with two different formats. If you know how resource views work, you might already have an idea how this can be accomplished. Resource views exist to provide information about how a resource in memory is going to be accessed by the GPU and creating different views for one resource is very common thing to do. This is when you create shader resource view and a render target for the same texture for example. The difficulty comes from the fact that both the resource and the view have formats, which can be different. Choosing a format for the view that is different from the resource format is not a trivial matter. I will focus on explaining this process for DirectX 12 and Vulkan APIs.</p>
+<p>By the way, I will only be focusing on casting formatted resources, this means they will support formatted loads by hardware as opposed to casting bits in shader code. As another option, you can also use unformatted resources like structured- and byte address buffers, integer textures, then perform format casting in the shader code manually – but that is not always a viable option, especially if you need texture sampling.</p>
+<h2>DirectX 12</h2>
+<p>In DirectX 12 (and also DirectX 11), the main way to use format casting is to create the main resource with a TYPELESS format and create the views with a typed format that is in the same format family as the main resource’s TYPELESS format. The best way to show is by an example. If you create the main ID3D12Resource with DXGI_FORMAT_R8G8B8A8_TYPELESS, then you can create the following resource views on it:</p>
+<ul>
+<li>DXGI_FORMAT_R8G8B8A8_UNORM</li>
+<li>DXGI_FORMAT_R8G8B8A8_UNORM_SRGB *</li>
+<li>DXGI_FORMAT_R8G8B8A8_UINT</li>
+<li>DXGI_FORMAT_R8G8B8A8_SNORM</li>
+<li>DXGI_FORMAT_R8G8B8A8_SINT</li>
+</ul>
+<p>* But the SRGB format cannot be created for unordered access views, and other formats will have other limitations. I will specifically explain SRGB format usage with unordered access views later, because this was one of my main goals lately.</p>
+<p>There is another, lesser known way of format casting with views, called Fully Typed Format Casting. If the graphics driver supports this, it will be reported in D3D12_FEATURE_DATA_D3D12_OPTIONS3 structure’s CastingFullyTypedFormatSupported value. What this allows is to create the main ID3D12Resource with a fully typed format and create a view on it with a different format – with more limitations than what a TYPELESS format casting allows. For example, if the main ID3D12Resource has DXGI_FORMAT_R8G8B8A8_UNORM, it can have a view that has DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, but it cannot have a view format of DXGI_FORMAT_R8G8B8A8_SNORM. For more details, you can read the specification <a href="https://microsoft.github.io/DirectX-Specs/d3d/RelaxedCasting.html#casting-rules-for-rs2-drivers">here</a>. (Note that it mentions RS2+ drivers, which means it requires Windows Redstone 2 version or greater)</p>
+<p>Other than SRGB casting, it is also useful because you can create the depth buffer resource with a D-type format and use it as a shader resource view too. For example: main resource of DXGI_FORMAT_D32_FLOAT (depth buffer) can also have a shader resource view with DXGI_FORMAT_R32_FLOAT. Previously you always had to create a TYPELESS format for a depth buffer that you wanted to also use as shader resource.</p>
+<p>There is also a new <a href="https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12device10-createcommittedresource3">CreateCommittedResource3 </a>function which has a parameter that allows specifying castable formats, but I couldn’t try this yet. This requires the DirectX 12 Agility SDK 1.7 or later.</p>
+<h2>Vulkan</h2>
+<p>In Vulkan, there is no TYPELESS format, but instead you must use the VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT flag for the main VkImage resource. This will allow you to create a VkImageView with a different format than the VkImage uses – but there are limitations. The format compatibility table can be found <a href="https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#formats-compatibility">here</a>. It mostly matches what DirectX 12 offers with the TYPELESS families, but looks like it’s more permissive. Another limitation is the need of specifying the intended usage of the VkImage, before any VkImageViews are created from it. </p>
+<p>This is a problem because in Vulkan – like in DirectX – you can also not create SRGB format with unordered access (which is the same as VK_IMAGE_USAGE_STORAGE_BIT). This means if you create a VK_FORMAT_R8G8B8A8_UNORM image with VK_IMAGE_USAGE_STORAGE_BIT, you will not be able to create an SRGB view for it (without the debug layer giving you errors), because the main resource indicates that it will be used as a storage image. This surprised me, but after some searching, I found the VK_IMAGE_CREATE_EXTENDED_USAGE_BIT on some forum post, which lets you create the image with usage flags that wouldn’t support the format. This lets you create an SRGB main image with also using VK_IMAGE_USAGE_STORAGE_BIT flag, provided that SRGB image view will not be used as storage image.</p>
+<p>But a twist is that you can still not create VK_FORMAT_R8G8B8A8_UNORM main image with VK_IMAGE_USAGE_STORAGE_BIT and a SRGB view, because the main image has storage image, but the SRGB view wouldn’t support it. For this, you can use a helper structure for view creations, called the VkImageViewUsageCreateInfo. This lets you specify the usage during the view creation. This only lets you specify usages that the main resource has, but fortunately it can be used to mask out (remove) the storage image flag for the view creation. </p>
+<p>This is a bit convoluted, so I’ll recap it:</p>
+<ul>
+<li>VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT: required for any basic format casting</li>
+<li>VK_IMAGE_CREATE_EXTENDED_USAGE_BIT: allows to specify usage flags that are not compatible with the format, provided that the view will not be used with incompatible usage</li>
+<li>VkImageViewUsageCreateInfo: it can be used to specify a subset of VkImage’s usage flags for VkImageView. You can link this structure with the VkImageViewCreateInfo::pNext pointer to enable it</li>
+</ul>
+<p>As another note, comparing the depth format casting to DirectX 12, Vulkan by default supports creating an image with a D-typed depth format and creating a sampled image with the same format, which is similar to DX12’s Fully Typed Format Casting.</p>
+<p>Another note on using VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT: Applying this flag can cause the image compression to be disabled on some GPU architecture, which can cause worse performance for that image. The <a href="https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_image_format_list.html">VK_KHR_image_format_list </a>extension (core in Vulkan 1.2) can be used to specify exactly which formats the image will be casted to, which can help enable compression and improve performance, for example if hardware supports optimally both linear and SRGB format on the same image, but not on some other default castable format.</p>
+<h2>SRGB</h2>
+<p>My main reason for delving into all this is because I wanted to write into some SRGB textures from compute shader, which was needlessly complicated. First of all, it is very easy to write into SRGB texture if it is a render target, because you can just bind a SRGB format texture as render target and write to it with no other code change. But for some reason you cannot create an unordered access view (or storage image in Vulkan terms) with an SRGB texture format. The way you have to do this is to create an unordered access view with UNORM format, and use shader code to convert the color values into SRGB space. You can use the pow(color, 1.0f / 2.2f) operation, or some more complicated piecewise function, such as:</p>
+<pre><code class="language-cpp">// Source: https://github.com/Microsoft/DirectX-Graphics-Samples/blob/master/MiniEngine/Core/Shaders/ColorSpaceUtility.hlsli
+float3 ApplySRGBCurve( float3 x )
+{
+    // Approximately pow(x, 1.0 / 2.2)
+    return x &lt; 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+}</code></pre>
+<p>As indicated above, this example is from the <a href="https://github.com/Microsoft/DirectX-Graphics-Samples/blob/master/MiniEngine/Core/Shaders/ColorSpaceUtility.hlsli">DirectX Graphics Samples</a>, which has other very useful examples as well.</p>
+<p>Before outputting to the RW Texture from the shader, you just need to run the final color through those functions and you are good, you can then sample the same texture with an SRGB typed (read only) shader resource view. Besides this, you will also need to follow the above-mentioned format compatibility rules to create correctly formatted resources and views.</p>
+<p>Doing this both in Vulkan and DirectX at the same time, the following method worked best for me when creating writable SRGB textures like this:</p>
+<ul>
+<li>Main resource is created with UNORM format. </li>
+<li>In DirectX 12, if the D3D12_FEATURE_DATA_D3D12_OPTIONS3::CastingFullyTypedFormatSupported is FALSE, then the main resource format falls back to TYPELESS format</li>
+<li>In Vulkan, main image resource has the VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT flags</li>
+<li>In Vulkan, the SRGB read-only view also takes a <code>VkImageViewUsageCreateInfo</code> structure with only VK_IMAGE_USAGE_SAMPLED_BIT usage flag</li>
+<li>Read-Write textures will always use UNORM format, read-only view will use SRGB format</li>
+</ul>
+<p>If you decide to create the main resource as SRGB, it is also doable. DirectX will work the same way, and in Vulkan you will need to include the VK_IMAGE_CREATE_EXTENDED_USAGE_BIT, which is required because the format is SRGB, but the usage flags include VK_IMAGE_USAGE_STORAGE_BIT.</p>
+<h2>Block Compression</h2>
+<p>Block compressed textures also need a form of data casting, but it must be done in yet another different way. The block compressed (BC) formats are not compatible with any of the other texture formats (except for SRGB variants), so they cannot be used in regular view casting. For writing the BC formats, we must write the compressed data block by block manually into either a buffer or a texture where each pixel corresponds to one compressed block.</p>
+<ul>
+<li>If we write into a buffer, we will need to do a buffer-to-texture copy (vkCmdCopyBufferToImage / CopyTextureRegion), like we would do for initializing data from CPU, so essentially copying from linear texture data to GPU optimal layout.</li>
+<li>If we write into texture, we will need to do a texture-to-texture copy (vkCmdCopyImage / CopyTextureRegion), where source texture is containing a raw compressed block in each pixel, and destination texture is the final texture with block compressed format. This means that the source and destination texture dimensions will not be the same, but the copy functions will handle the data reinterpreting for you. More details in the <a href="https://learn.microsoft.com/en-us/windows/win32/direct3d10/d3d10-graphics-programming-guide-resources-block-compression#format-conversion-using-direct3d-101">DirectX documentation</a>, which has a table of what texture formats can be used as source block data.</li>
+</ul>
+<p>For the block compression code, I chose to use the <a href="https://github.com/GPUOpen-Tools/compressonator/tree/master/cmp_core/shaders">Compressonator library’s shaders</a>. As a simple integration guide, I recommend to grab the following files:</p>
+<ul>
+<li><a href="https://github.com/GPUOpen-Tools/compressonator/blob/master/cmp_core/shaders/common_def.h">common_def.h</a></li>
+<li><a href="https://github.com/GPUOpen-Tools/compressonator/blob/master/cmp_core/shaders/bcn_common_api.h">bcn_common_api.h</a></li>
+<li><a href="https://github.com/GPUOpen-Tools/compressonator/blob/master/cmp_core/shaders/bcn_common_kernel.h">bcn_common_kernel.h</a></li>
+</ul>
+<p>For integrating into a HLSL shader, you will simply need to include the API like:</p>
+<pre><code class="language-cpp">#define ASPM_HLSL
+#include "compressonator/bcn_common_kernel.h"</code></pre>
+<p>After the library is included, you can use the compressor library in the shader very easily:</p>
+<pre><code class="language-cpp">RWTexture2D&lt;uint2&gt; output;	// BC1
+
+// Declare the block of pixels that will be compressed:
+//  BC1 compression requires only rgb data (and optionally 1-bit alpha)
+float3 block_rgb[BLOCK_SIZE_4X4];
+
+// [not shown] fill your block of 16 pixels (row major layout)
+
+// compress the block with BC1 and write into RWTexture2D:
+output[block_pixel.xy] = CompressBlockBC1_UNORM(block_rgb, CMP_QUALITY0, /*isSRGB =*/ true);</code></pre>
+<p>The library can support other BC compression formats, and SRGB as well.</p>
+<p>The unfortunate consequence of doing the block compression with an extra copy is obviously that you need to create an extra resource, using additional memory. The not so obvious one is that you will lose ability to easily batch texture writes. For example, filling a texture atlas with lots of individual rectangles cannot simply go into the atlas, but they need to write into temporary raw BC block textures, and use copies into the atlas. Rendering and then copying will require syncronization between these steps. It can be avoided by allocating raw block textures that can hold multiple temporary textures (using more memory), and only flush them when they are full. One other problem is that in DirectX, even if you are batching the copies, they will be serialized, which is a significant flaw compared to Vulkan, by the way.</p>
+<p>We can also do a more sophisticated way of writing to block compressed textures, without using copies, and that is by using sparse/tiled resources.</p>
+<h2>Sparse/Tiled resources and aliasing</h2>
+<p>Sparse resources in Vulkan, or Tiled Resources in DirectX let you map a single memory page to multiple resources, so this can be utilized for a kind of data reinterpreting/casting. Let’s get back to the previous example, writing block compressed texture from compute shader. You can write into a texture that is formatted as R32G32_UINT, that will be the format of the write-only tiled resource. The read-only tiled resource can use BC1_UNORM format. Both textures (or a part of them) can be mapped to a single 64KB memory page, and from this point the reinterpreting should work, even in DirectX 11. You just have to beware that you don’t write or read the tile simultaneously, for that you will use a UAV/memory barrier. Interestingly for this reason, even DirectX 11 had a barrier API, called <a href="https://learn.microsoft.com/en-us/windows/win32/api/d3d11_2/nf-d3d11_2-id3d11devicecontext2-tiledresourcebarrier">TiledResourceBarrier</a>.</p>
+<p>In practice, this is simpler to implement than you might think, if you already have a setup that uses sparse textures. Whenever you map a tile of your BC read-only texture, you simply also map the same tile for your write-only uint2 texture. Since the BC texture and the uint2 texture will have the same number and layout of tiles, all the mapping parameters will be the same, except the desination resource pointer. However, this will double the amount of your tile mappings, so be aware of that.</p>
+<p>There are some rules for format compatibility within sparse mapping, described in the <a href="https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#5.9.4.4.7%20Data%20Compatibility%20Across%20Tiled%20Resources%20Sharing%20Tiles">DirectX 11 specification</a>.</p>
+<p>In Vulkan, you can do the same, but you will also need to use the VK_IMAGE_CREATE_SPARSE_ALIASED_BIT if you use aliasing with sparse texture.</p>
+<p>This is somewhat similar to aliased placed resources that are only available in DirectX 12 and Vulkan. The difference is that after placed resource aliasing, the contents need to be reinitialized/discarded, so they won’t be preserved. For this reason, it doesn’t seem like placed resource aliasing could be used for the BC compression like that.</p>
+<h2>R9G9B9E5_SHAREDEXP</h2>
+<p>This format is capable of storing unsigned float3, a bit similarly to R11G11B10_FLOAT, the difference is that this format cannot be written to easily with DirectX 12. The format can not be used as either render target or RW texture, and it must be packed as uint32_t. But there is also no way to create a R32_UINT or typeless view for this to be written without getting errors from DX12. To write this format, you will either need to use write a R32_UINT texture and use CopyResource into a R9G9B9E5_SHAREDEXP, or you can also use the sparse aliasing trick, mentioned earlier, and alias the resource as R32_UINT for writing. The DirectX 12 Agility SDK 1.7 with CreateCommittedResource3 will supposedly allow format casting to this format as well.</p>
+<p>Interestingly, this format (VK_FORMAT_E5B9G9R9_UFLOAT_PACK32) is castable in Vulkan normally, because it’s<a href="https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#formats-compatibility"> compatible with the other 32-bit per pixel formats</a>.</p>
+<p>To actually pack your float3 data into uint32, you can use <a href="https://github.com/microsoft/DirectX-Graphics-Samples/blob/master/MiniEngine/Core/Shaders/PixelPacking_RGBE.hlsli">these helper shader functions from DirectX graphics samples</a>. To use this format on the CPU, the <a href="https://github.com/microsoft/DirectXMath">DirectXMath library</a> supports it out of the box with the XMFLOAT3SE, XMLoadFloat3SE, XMStoreFloat3SE functions.</p>
+<p>Why you would want to use this format, if R11G11B10_FLOAT is much easier to use and also supports blending? Because the better precision you can get from it. In my experience, the R11G11B10_FLOAT format is very good and you don’t really notice the low precision in most cases, but there was one case where it was not enough: DDGI (Dynamic Diffuse Global Illumination) probe data is continuously blended across several frames, and the R11G11B10_FLOAT format will have very noticeable hue shift to green color after a few frames. Switch to R9G9B9E5_SHAREDEXP and the problem is simply gone, no need to use a higher memory cost format such as R16G16B16A16_FLOAT. Interestingly, using R11G11B10_FLOAT for something like temporal anti aliasing is still good enough, and doesn’t have noticeable quality loss that I noticed, probably because TAA discards the frame history faster.</p>
+<p>Thanks to all people online answering my questions about these topics and thank you for reading!</p>
+        </div>
+        <nav class="post-nav" aria-label="More posts">
+            <a class="older" href="../../../../2022/09/23/animation-retargeting/index.html">← Animation Retargeting</a>
+            <a class="newer" href="../../../../2023/05/07/vulkan-video-decoding/index.html">Vulkan Video Decoding →</a>
+        </nav>
+    </article>
+
+</body>
+</html>
